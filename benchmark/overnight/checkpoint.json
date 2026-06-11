@@ -1,0 +1,22 @@
+{
+  "stepIndex": 3,
+  "chunksThisRun": 0,
+  "probesRun": 5,
+  "confirmsRun": 0,
+  "selfRuns": 0,
+  "ishtarRuns": 0,
+  "deadline": null,
+  "bestPierce": {
+    "name": "default",
+    "env": {},
+    "score": null
+  },
+  "opts": {
+    "steps": 1,
+    "workers": 6,
+    "probeGames": 12,
+    "confirmGames": 4
+  },
+  "lastLabel": "probe-10v5",
+  "lastScore": "4-8"
+}

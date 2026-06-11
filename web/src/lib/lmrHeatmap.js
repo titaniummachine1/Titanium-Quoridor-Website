@@ -1,0 +1,597 @@
+/** LMR vision — root move depth / reduction overlays from engine JSON. */
+
+/**
+ * @param {string[]} algebraicMoves
+ * @param {number} [timeSec]
+ */
+export async function fetchLmrSnapshot(algebraicMoves, timeSec = 10, idDepth = 8) {
+  const res = await fetch('/api/titanium/lmr', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ moves: algebraicMoves, timeSec, idDepth }),
+  });
+  const data = await res.json();
+  if (!res.ok || data.error) {
+    throw new Error(data.error ?? `LMR request failed (${res.status})`);
+  }
+  return data;
+}
+
+function normalizeLmrEntry(entry) {
+  const reduction = Number(entry.reduction ?? 0);
+  const childFull = Number(entry.childDepthFull ?? entry.child_depth_full ?? 0);
+  const childUsed = Number(entry.childDepthUsed ?? entry.child_depth_used ?? childFull);
+  return {
+    move: entry.move ?? entry.mv,
+    kind: entry.kind ?? (entry.is_pawn || entry.isPawn ? 'pawn' : 'wall'),
+    order: entry.order ?? 0,
+    catCm: entry.catCm ?? entry.cat_cm ?? 0,
+    tactical: Boolean(entry.tactical),
+    hot: Boolean(entry.hot),
+    pruned: Boolean(entry.pruned),
+    reduction,
+    childDepthFull: childFull,
+    childDepthUsed: childUsed,
+    reSearched: Boolean(entry.reSearched ?? entry.re_searched),
+    inFullWindow: Boolean(entry.inFullWindow ?? entry.in_full_window),
+    score: entry.score ?? null,
+    nodes: Number(entry.nodes ?? 0),
+    sharePct: 0,
+    displaySharePct: 0,
+    searched: entry.searched !== false,
+    unsearched: Boolean(entry.unsearched),
+  };
+}
+
+function logWeight(value) {
+  const v = Number(value);
+  if (!Number.isFinite(v) || v <= 0) {
+    return 0;
+  }
+  return Math.log1p(v);
+}
+
+/** Match engine `cat_heat_fraction` — 0 at cold floor, 1 at node max. */
+export function catHeatFraction(catCm, catMax, coldCm = 60) {
+  const h = Number(catCm) || 0;
+  const max = Number(catMax) || 0;
+  const cold = Number(coldCm) || 0;
+  if (max <= cold) {
+    return h > cold ? 1 : 0;
+  }
+  return Math.min(1, Math.max(0, (h - cold) / (max - cold)));
+}
+
+/** Wall vs pawn CAT ceiling — walls compare to wall hotspots only. */
+function catHeatRefs(moves) {
+  let all = 0;
+  let walls = 0;
+  let pawns = 0;
+  for (const m of moves) {
+    const cm = Number(m.catCm) || 0;
+    all = Math.max(all, cm);
+    if (m.kind === 'wall') {
+      walls = Math.max(walls, cm);
+    } else {
+      pawns = Math.max(pawns, cm);
+    }
+  }
+  return { all, walls: Math.max(walls, all), pawns };
+}
+
+function catRefMax(entry, refs) {
+  return entry.kind === 'wall' ? refs.walls : refs.all;
+}
+
+/**
+ * Effort shares for overlays + dispersion panel.
+ * Search: linear node % (truth) + log-scaled bar width (spread).
+ * Shallow plan: CAT-shaped planned attention.
+ */
+function attachEffortShares(moves, coldCm = 60, { shallow = false } = {}) {
+  const refs = catHeatRefs(moves);
+  const linearTotal = moves.reduce((sum, m) => sum + (m.nodes > 0 ? m.nodes : 0), 0);
+  const hasSearchNodes = !shallow && linearTotal > 0;
+
+  if (hasSearchNodes) {
+    const logWeights = moves.map((m) => logWeight(m.nodes));
+    const logTotal = logWeights.reduce((sum, w) => sum + w, 0);
+    return moves.map((m, i) => {
+      const refMax = catRefMax(m, refs);
+      const frac = catHeatFraction(m.catCm, refMax, coldCm);
+      const sharePct =
+        m.nodes > 0 ? Math.round((m.nodes / linearTotal) * 1000) / 10 : 0;
+      const effortBarPct =
+        logTotal > 0 ? Math.round((logWeights[i] / logTotal) * 100) : 0;
+      return {
+        ...m,
+        sharePct,
+        displaySharePct: Math.round(sharePct),
+        effortBarPct,
+        heatFraction: frac,
+      };
+    });
+  }
+
+  const weights = moves.map((m) => {
+    const refMax = catRefMax(m, refs);
+    const frac = catHeatFraction(m.catCm, refMax, coldCm);
+    const catW = frac * frac * 100;
+    const nodeW = logWeight(m.nodes);
+    if (m.nodes > 0) {
+      return catW * 0.7 + nodeW * 0.3;
+    }
+    return catW;
+  });
+  const total = weights.reduce((sum, w) => sum + w, 0);
+  if (total <= 0) {
+    return moves;
+  }
+  return moves.map((m, i) => {
+    const refMax = catRefMax(m, refs);
+    const frac = catHeatFraction(m.catCm, refMax, coldCm);
+    const displayShare = Math.round((weights[i] / total) * 100);
+    return {
+      ...m,
+      sharePct: displayShare,
+      displaySharePct: displayShare,
+      effortBarPct: displayShare,
+      heatFraction: frac,
+      planAttentionPct: m.unsearched ? displayShare : undefined,
+    };
+  });
+}
+
+/**
+ * Fill gaps in search rootMoves with the static pre-search plan (same legal list).
+ * Search behaviour unchanged — viz only.
+ *
+ * @param {object[]} planMoves
+ * @param {object[]} searchMoves
+ */
+export function mergeLmrPlanWithSearch(planMoves, searchMoves) {
+  if (!planMoves?.length) {
+    return searchMoves ?? [];
+  }
+  if (!searchMoves?.length) {
+    return planMoves.map((m) => ({ ...m, unsearched: true, searched: false, nodes: 0 }));
+  }
+  const planByKey = indexLmrMoves(planMoves);
+  const searchByKey = indexLmrMoves(searchMoves);
+  const keys = new Set([...planByKey.keys(), ...searchByKey.keys()]);
+  const merged = [];
+  for (const key of keys) {
+    const plan = planByKey.get(key);
+    const search = searchByKey.get(key);
+    if (search) {
+      merged.push({
+        ...plan,
+        ...search,
+        catCm: search.catCm ?? plan?.catCm ?? 0,
+        searched: true,
+        unsearched: false,
+      });
+    } else if (plan) {
+      merged.push({
+        ...plan,
+        searched: false,
+        unsearched: true,
+        nodes: 0,
+        sharePct: 0,
+      });
+    }
+  }
+  merged.sort((a, b) => a.order - b.order);
+  return merged;
+}
+
+/**
+ * @param {Array<Record<string, unknown>>} moves
+ * @returns {Map<string, object>}
+ */
+export function indexLmrMoves(moves) {
+  const map = new Map();
+  for (const entry of moves ?? []) {
+    const alg = entry.move ?? entry.mv;
+    if (!alg) {
+      continue;
+    }
+    map.set(String(alg), entry);
+  }
+  return map;
+}
+
+function coldCmThreshold(viz) {
+  return Number(viz?.lmrProfile?.coldCm ?? 60);
+}
+
+function fmtDepth(used) {
+  const d = Number(used ?? 0);
+  return d > 0 ? `d${d}` : '';
+}
+
+/** Minimum ply reduction before we paint a slot in live search (shallow is sparser). */
+function minCutToShow(viz) {
+  return viz?.shallow ? 1 : 2;
+}
+
+/**
+ * Skip pruned / noise — only draw moves with a meaningful cut, corridor heat, or search share.
+ * `−1` in the UI means "1 ply LMR cut", not a leaf-node flag; we hide lone 1-ply plan noise.
+ */
+export function lmrEntryWorthShowing(entry, viz) {
+  if (!entry) {
+    return false;
+  }
+  // Engine marks CAT-top moves — always paint in shallow plan.
+  if (viz?.shallow && entry.hot) {
+    return true;
+  }
+  // Pierce cap dropout — still paint in shallow when CAT says the wall matters.
+  if (entry.pruned) {
+    return Boolean(viz?.shallow && entry.catCm > 0);
+  }
+  const cold = coldCmThreshold(viz);
+  const minCut = minCutToShow(viz);
+
+  if (entry.reSearched) {
+    return true;
+  }
+
+  const displayShare = Number(entry.displaySharePct ?? entry.sharePct) || 0;
+
+  // Actually searched at root — always interesting.
+  if (!viz?.shallow && entry.searched && (entry.nodes > 0 || displayShare > 0)) {
+    return true;
+  }
+
+  // Any measurable node share in live search.
+  if (!viz?.shallow && (entry.nodes > 0 || displayShare >= 0.5)) {
+    return true;
+  }
+
+  // Significant planned or actual cut.
+  if (entry.reduction >= minCut) {
+    return true;
+  }
+
+  // Corridor-hot — LMR treats as tactical.
+  if (entry.catCm >= cold) {
+    return true;
+  }
+
+  // First root slot with a real signal only.
+  if (entry.order === 0 && (entry.tactical || entry.inFullWindow)) {
+    return (
+      entry.catCm > 0 ||
+      entry.reduction >= minCut ||
+      (!viz?.shallow && entry.searched && entry.nodes > 0)
+    );
+  }
+
+  // Pre-search plan slots.
+  if (viz?.shallow) {
+    if (entry.reduction >= minCut) {
+      return true;
+    }
+    if (entry.inFullWindow || entry.tactical) {
+      return true;
+    }
+    if (entry.catCm > 0) {
+      return true;
+    }
+    return false;
+  }
+
+  if (entry.unsearched && entry.reduction >= minCut) {
+    return true;
+  }
+
+  return false;
+}
+
+/** Map value into 0..1 using this view's min–max (zeros are not drawn). */
+function proportionalT(value, min, max) {
+  const v = Number(value);
+  if (!Number.isFinite(v) || v <= 0) {
+    return 0;
+  }
+  if (max <= min) {
+    return 1;
+  }
+  return Math.min(1, Math.max(0, (v - min) / (max - min)));
+}
+
+function displayShareOf(entry) {
+  return Number(entry.displaySharePct ?? entry.sharePct) || 0;
+}
+
+function computeLmrRanges(visibleMoves) {
+  const catValues = visibleMoves.map((m) => Number(m.catCm) || 0).filter((v) => v > 0);
+  const cutValues = visibleMoves.map((m) => Number(m.reduction) || 0).filter((v) => v > 0);
+  const shareValues = visibleMoves.map((m) => displayShareOf(m)).filter((v) => v > 0);
+  const minCat = catValues.length ? Math.min(...catValues) : 0;
+  const maxCat = catValues.length ? Math.max(...catValues) : 1;
+  const maxCut = cutValues.length ? Math.max(...cutValues) : 1;
+  const maxShare = shareValues.length ? Math.max(...shareValues) : 1;
+  return {
+    catCm: { min: minCat, max: maxCat },
+    reduction: { min: 0, max: maxCut },
+    sharePct: { min: 0, max: maxShare },
+  };
+}
+
+/** Corridor cm — yellow → orange → red, scaled to visible min..max. */
+function corridorFill(t, alpha = 0.8) {
+  const hue = Math.round(52 * (1 - t));
+  const sat = Math.round(86 + 10 * t);
+  const light = Math.round(58 - 12 * t);
+  return {
+    fill: `hsla(${hue}, ${sat}%, ${light}%, ${alpha})`,
+    textLight: light < 48 || t > 0.72,
+  };
+}
+
+/** Ply reduction — teal → amber → crimson, scaled to visible max cut. */
+function cutFill(t, alpha = 0.82) {
+  const hue = Math.round(168 * (1 - t));
+  const sat = Math.round(62 + 30 * t);
+  const light = Math.round(54 - 14 * t);
+  return {
+    fill: `hsla(${hue}, ${sat}%, ${light}%, ${alpha})`,
+    textLight: t > 0.55,
+  };
+}
+
+/** Search node share — slate → indigo → violet, scaled to visible max %. */
+function shareFill(t, alpha = 0.82) {
+  const hue = Math.round(215 - 55 * t);
+  const sat = Math.round(42 + 38 * t);
+  const light = Math.round(64 - 20 * t);
+  return {
+    fill: `hsla(${hue}, ${sat}%, ${light}%, ${alpha})`,
+    textLight: t > 0.45,
+  };
+}
+
+/**
+ * @param {object} payload
+ * @param {object[]} [payload.planMoves] — pre-search plan to pad search gaps
+ */
+export function buildLmrViz(payload) {
+  const shallow = payload.source === 'shallow';
+  const profile = payload.lmrProfile ?? {};
+  const depthLog = payload.depthLog ?? [];
+  const deepFromLog = depthLog.length
+    ? depthLog.reduce((best, e) => ((e.depth ?? 0) > (best?.depth ?? 0) ? e : best))
+    : null;
+  const searchDepth =
+    payload.searchDepth ??
+    profile.idDepth ??
+    deepFromLog?.depth ??
+    payload.idDepth ??
+    1;
+
+  let raw = payload?.moves ?? payload?.rootMoves ?? [];
+  if (!shallow && payload.planMoves?.length) {
+    const normalizedSearch = raw.map(normalizeLmrEntry);
+    const normalizedPlan = payload.planMoves.map(normalizeLmrEntry);
+    raw = mergeLmrPlanWithSearch(normalizedPlan, normalizedSearch);
+  }
+  if (!raw.length) {
+    return null;
+  }
+
+  let moves = raw.map(normalizeLmrEntry);
+  const coldCm = Number(profile.coldCm ?? 60);
+  moves = attachEffortShares(moves, coldCm, { shallow });
+  const vizDraft = { shallow, searchDepth, lmrProfile: profile };
+  let visibleMoves = pickLmrBoardMoves(moves, vizDraft);
+  if (shallow && visibleMoves.length === 0 && moves.length > 0) {
+    visibleMoves = moves.filter((m) => !m.pruned).slice(0, 48);
+  }
+  const dispersion = buildLmrDispersionRows(moves, { shallow, searchDepth });
+  const moveIndex = indexLmrMoves(visibleMoves);
+  const ranges = computeLmrRanges(visibleMoves);
+  const catRefs = catHeatRefs(moves);
+  return {
+    source: payload.source ?? 'search',
+    shallow,
+    idDepth: searchDepth,
+    searchDepth,
+    catRefs,
+    coldCm,
+    ranges,
+    maxCatCm: ranges.catCm.max,
+    maxSharePct: ranges.sharePct.max,
+    maxReduction: ranges.reduction.max,
+    lmrProfile: profile,
+    lmrReSearches: payload.lmrReSearches ?? null,
+    totalNodes: moves.reduce((s, m) => s + m.nodes, 0),
+    searchedCount: moves.filter((m) => m.searched).length,
+    visibleCount: visibleMoves.length,
+    dispersion,
+    moveIndex,
+    moves,
+    visibleMoves,
+    label: shallow ? 'pre-search plan' : `search d${searchDepth}`,
+  };
+}
+
+/** Board slots — searched moves + cold shallow leaves so dispersion is visible on-grid. */
+function pickLmrBoardMoves(moves, viz) {
+  if (viz.shallow) {
+    return moves.filter((m) => lmrEntryWorthShowing(m, viz));
+  }
+  const searched = moves.filter((m) => m.nodes > 0 || lmrEntryWorthShowing(m, viz));
+  const byNodes = [...searched].sort((a, b) => (b.nodes ?? 0) - (a.nodes ?? 0));
+  const top = new Set(byNodes.slice(0, 32).map((m) => m.move));
+  const coldLeaves = moves.filter(
+    (m) =>
+      !top.has(m.move) &&
+      m.childDepthUsed <= 2 &&
+      m.reduction >= 2 &&
+      lmrEntryWorthShowing(m, viz),
+  );
+  const picked = [...byNodes.filter((m) => top.has(m.move)), ...coldLeaves.slice(0, 12)];
+  const uniq = new Map();
+  for (const m of picked) {
+    uniq.set(m.move, m);
+  }
+  return [...uniq.values()];
+}
+
+/**
+ * Ranked rows for the dispersion panel — full move list, not board-filtered.
+ * @returns {Array<{move:string,kind:string,sharePct:number,effortBarPct:number,nodes:number,childDepthUsed:number,reduction:number,catCm:number,searched:boolean}>}
+ */
+export function buildLmrDispersionRows(moves, { shallow = false, searchDepth = 1 } = {}) {
+  const sortKey = (m) => {
+    if (!shallow && m.nodes > 0) {
+      return m.nodes;
+    }
+    return (m.effortBarPct ?? m.displaySharePct ?? 0) * 1000 + (m.catCm ?? 0);
+  };
+  return [...(moves ?? [])]
+    .sort((a, b) => sortKey(b) - sortKey(a))
+    .map((m) => ({
+      move: m.move,
+      kind: m.kind,
+      sharePct: m.sharePct ?? m.displaySharePct ?? 0,
+      effortBarPct: m.effortBarPct ?? m.displaySharePct ?? 0,
+      nodes: m.nodes ?? 0,
+      childDepthUsed: m.childDepthUsed ?? 0,
+      childDepthFull: m.childDepthFull ?? 0,
+      reduction: m.reduction ?? 0,
+      catCm: m.catCm ?? 0,
+      searched: m.searched !== false && !m.unsearched,
+      order: m.order ?? 0,
+      reSearched: Boolean(m.reSearched),
+    }))
+    .filter(
+      (m) =>
+        shallow ||
+        m.nodes > 0 ||
+        m.sharePct > 0 ||
+        m.reduction >= 1 ||
+        m.catCm > 0,
+    )
+    .slice(0, shallow ? 40 : 36);
+}
+
+/**
+ * @returns {{ fill: string, label: string, mode: string, textLight: boolean }}
+ */
+export function lmrDepthStyle(entry, viz) {
+  if (!entry) {
+    return { fill: 'transparent', label: '', mode: '', textLight: false };
+  }
+  const alpha = entry.unsearched ? 0.42 : 0.84;
+  const used = entry.childDepthUsed;
+  const ranges = viz?.ranges ?? computeLmrRanges([entry]);
+  let painted;
+  let mode;
+  if (!viz?.shallow && entry.searched && entry.nodes > 0) {
+    const share = entry.effortBarPct ?? displayShareOf(entry);
+    painted = shareFill(
+      proportionalT(share, ranges.sharePct.min, ranges.sharePct.max),
+      alpha,
+    );
+    mode = 'share';
+  } else if (entry.reduction > 0) {
+    painted = cutFill(
+      proportionalT(entry.reduction, ranges.reduction.min, ranges.reduction.max),
+      alpha,
+    );
+    mode = 'cut';
+  } else if (entry.catCm > 0) {
+    const refMax =
+      entry.kind === 'wall'
+        ? (viz?.catRefs?.walls ?? ranges.catCm.max)
+        : (viz?.catRefs?.all ?? ranges.catCm.max);
+    const frac =
+      entry.heatFraction ?? catHeatFraction(entry.catCm, refMax, viz?.coldCm ?? 60);
+    painted = corridorFill(frac, alpha);
+    mode = 'corridor';
+  } else {
+    painted = cutFill(0, alpha * 0.75);
+    mode = 'full';
+  }
+  const label = entry.unsearched
+    ? `plan only · −${entry.reduction} ply${used > 0 ? ` · child d${used}` : ''}`
+    : entry.reduction > 0
+      ? `LMR cut −${entry.reduction} ply${used > 0 ? ` · searched d${used}` : ''}`
+      : mode === 'share'
+        ? `${displayShareOf(entry)}% nodes (log)`
+        : entry.catCm > 0
+          ? `corridor ${entry.catCm}cm`
+          : used > 0
+            ? `d${used} full`
+            : 'full depth';
+  return { fill: painted.fill, label, mode, textLight: painted.textLight };
+}
+
+export function lmrWallOutlineColor(entry, viz) {
+  const style = lmrDepthStyle(entry, viz);
+  return style.fill.replace(/,\s*[\d.]+%?\)$/, ', 0.95)');
+}
+
+export function lmrDisplayText(entry, viz) {
+  if (!entry || !lmrEntryWorthShowing(entry, viz)) {
+    return '';
+  }
+  if (!viz?.shallow && entry.nodes > 0) {
+    const pct = entry.sharePct ?? displayShareOf(entry);
+    return pct < 1 ? '<1%' : `${Math.round(pct)}%`;
+  }
+  if (!viz?.shallow && entry.planAttentionPct > 0) {
+    return `${entry.planAttentionPct}%`;
+  }
+  if (entry.reduction >= 2) {
+    return `−${entry.reduction}`;
+  }
+  if (entry.catCm > 0 && viz?.shallow) {
+    return String(entry.catCm);
+  }
+  const depth = fmtDepth(entry.childDepthUsed);
+  if (depth) {
+    return depth;
+  }
+  if (entry.reduction === 1) {
+    return '−1';
+  }
+  return '';
+}
+
+export function lmrSubLabel(entry, viz) {
+  if (!entry || !lmrEntryWorthShowing(entry, viz)) {
+    return '';
+  }
+  const parts = [];
+  const depth = fmtDepth(entry.childDepthUsed);
+  if (!viz?.shallow && entry.nodes > 0 && depth) {
+    parts.push(depth);
+  } else if (entry.reduction > 0 && entry.catCm > 0) {
+    parts.push(String(entry.catCm));
+  } else if (depth && entry.reduction > 0) {
+    parts.push(depth);
+  }
+  if (entry.reduction > 0 && !viz?.shallow && entry.nodes > 0) {
+    parts.push(`−${entry.reduction}`);
+  }
+  if (entry.reSearched) {
+    parts.push('↺');
+  }
+  return parts.join(' ');
+}
+
+/** 0–100 for bottom effort bar on board cells. */
+export function lmrEffortBarPct(entry, viz) {
+  if (!entry) {
+    return 0;
+  }
+  if (!viz?.shallow && entry.nodes > 0) {
+    return entry.effortBarPct ?? entry.displaySharePct ?? 0;
+  }
+  return entry.effortBarPct ?? entry.displaySharePct ?? 0;
+}
