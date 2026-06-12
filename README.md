@@ -19,3 +19,9 @@ Layout:
 - `_vendor/` — reference JS engines and parity/diff tooling
 - `scraped/`, `extracted/` — reference material
 - `benchmark/` — benchmark reports
+
+## License
+
+Titanium-original code: **GPL-3.0-or-later** (see `LICENSE`).
+Scraped UI, `_vendor/`, and reference engines keep their upstream licenses
+(see `THIRD_PARTY.md`). The `engine/` submodule is GPL-3.0-or-later.
