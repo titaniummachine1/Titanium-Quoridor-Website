@@ -75,9 +75,24 @@ scraped site JS for search parity.
   queue-BFS over `can_step` — exact agreement, plus per-square
   `WallGrids`/`can_step` equivalence for every single-wall board.
 
-## Performance (release, `examples/bench_movegen.rs`)
+## Performance (release)
+
+End-to-end perft (`examples/bench_movegen.rs`):
 
 | Workload | V10 | V11 | |
 |---|---|---|---|
 | perft d3 × 15 canta midgames | 4.35 Mnodes/s | 24.14 Mnodes/s | 5.5× |
 | perft d4 startpos | 83.3 Mnodes/s | 150.6 Mnodes/s | 1.8× |
+
+Isolated wall-legality check (`examples/bench_wall_check.rs`, 428 flood-gated
+wall trials across the 15 canta midgames, identical legal counts):
+
+| Per wall trial | ns/trial | |
+|---|---|---|
+| V10: `set_wall` + zobrist + `DirMasks` rebuild (324 `can_step` calls) + 2 floods | 937.6 | baseline |
+| V10 floods alone (masks prebuilt — unsound lower bound) | 103.0 | 9.1× of cost was the rebuild |
+| **V11: const mask flip + parallel flood + bit theft** | **70.2** | **13.3× less work** |
+
+V11 averages 11.7 dilation iterations per legality check (≈12 register ops
+each), and bit theft fires on 97.2% of trials — Player 2 almost never
+refloods, it annexes Player 1's visited region on contact.
