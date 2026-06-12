@@ -1,5 +1,7 @@
 # Engine patches: Titanium movegen V11 + ACE v11
 
+> **Status: applied** — merged to [titanium-quoridor `main`](https://github.com/titaniummachine1/titanium-quoridor/commit/da75d4a) (`da75d4a`). The `engine/` submodule in this PR points at that commit. Patches kept here for history / `git am` replay.
+
 This directory carries engine work that belongs in the
 [titanium-quoridor](https://github.com/titaniummachine1/titanium-quoridor)
 repository (the `engine/` submodule). This session could only push to the
