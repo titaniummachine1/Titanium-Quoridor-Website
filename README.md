@@ -37,9 +37,13 @@ cd web && npm install && npm run dev
 cd web && npm run build:pages && npm run preview:pages
 ```
 
-On GitHub Pages, in-browser engines work (Gorisanson, Ace v8, Quoridor v3) plus
-remote Ishtar/Ka WebSocket AIs. The Rust Titanium binary needs `npm run dev` locally
-or a future WASM bundle on Pages.
+On GitHub Pages:
+
+- **Titanium** — Rust engine compiled to **WebAssembly** (built in CI from `engine/`)
+- **JS engines** — Gorisanson MCTS, Ace v8 (HTML extract), Quoridor v3 αβ
+- **Remote** — Ishtar / Ka (WebSocket)
+
+Locally, `npm run dev` uses the native Rust binary (faster); `npm run build:pages` uses WASM like production.
 
 Layout:
 

@@ -1,5 +1,7 @@
 web/node_modules/
 web/dist/
+web/src/wasm/titanium/*
+!web/src/wasm/titanium/.gitkeep
 *.log
 
 # Secrets & credentials (never commit)

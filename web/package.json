@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "build:pages": "vite build --mode ghpages",
+    "build:wasm": "node scripts/build-wasm.mjs",
+    "build:pages": "npm run build:wasm && vite build --mode ghpages",
     "preview": "vite preview",
     "preview:pages": "vite preview --mode ghpages"
   },

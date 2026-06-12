@@ -39,7 +39,7 @@ const TITANIUM_ENGINE = {
   key: PlayerType.TitaniumMinimax,
   engineMode: 'minimax',
   tooltip:
-    'Iterative-deepening negamax with adaptive LMR and CAT (`cargo build --release` in engine/)',
+    'Iterative-deepening negamax with adaptive LMR and CAT — WASM on the public site, native Rust via `npm run dev` locally',
 };
 
 const ACE_V8_JS_ENGINE = {

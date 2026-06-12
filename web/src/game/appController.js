@@ -6,6 +6,8 @@ import { buildLmrViz, fetchLmrSnapshot } from '../lib/lmrHeatmap.js';
 import { toAlgebraic } from '../lib/gameLogic.js';
 import { EngineClient } from '../lib/engineClient.js';
 import { GorisansonEngineClient, TitaniumEngineClient } from '../lib/localMctsEngine.js';
+import { TitaniumWasmEngineClient } from '../lib/titaniumWasmClient.js';
+import { useStaticEngineBackend } from '../lib/engineBackend.js';
 import { AceV8JsEngineClient } from '../lib/aceV8JsEngine.js';
 import { QuoridorV3EngineClient } from '../lib/quoridorV3Engine.js';
 import { PlayerType, StrengthLevel, TimeToMove } from '../lib/engineConfig.js';
@@ -141,12 +143,20 @@ export class AppController {
     this.engines = new Map();
     this.engineConfigs = getAllEngineConfigs();
 
+    const staticBackend = useStaticEngineBackend();
     this.settings = {
-      players: [PlayerType.AceV8TiPmc, PlayerType.AceV8Ti],
-      playerAiSettings: [
-        defaultPlayerAiSettings(PlayerType.AceV8TiPmc, this.engineConfigs),
-        defaultPlayerAiSettings(PlayerType.AceV8Ti, this.engineConfigs),
-      ],
+      players: staticBackend
+        ? [PlayerType.Human, PlayerType.TitaniumMinimax]
+        : [PlayerType.AceV8TiPmc, PlayerType.AceV8Ti],
+      playerAiSettings: staticBackend
+        ? [
+            defaultPlayerAiSettings(PlayerType.Human, this.engineConfigs),
+            defaultPlayerAiSettings(PlayerType.TitaniumMinimax, this.engineConfigs),
+          ]
+        : [
+            defaultPlayerAiSettings(PlayerType.AceV8TiPmc, this.engineConfigs),
+            defaultPlayerAiSettings(PlayerType.AceV8Ti, this.engineConfigs),
+          ],
       playerAiSettingsMemory: [{}, {}],
       rotateBoard: false,
       displayCoordinates: true,
@@ -1081,7 +1091,16 @@ export class AppController {
     if (config.kind === 'ace-v8-js') {
       return new AceV8JsEngineClient(config);
     }
-    if (config.kind === 'titanium' || config.kind === 'ace') {
+    if (config.kind === 'titanium') {
+      if (useStaticEngineBackend()) {
+        return new TitaniumWasmEngineClient(config);
+      }
+      return new TitaniumEngineClient(config, { seatId: this.engineSeatKey(seatIndex) });
+    }
+    if (config.kind === 'ace') {
+      if (useStaticEngineBackend()) {
+        return new AceV8JsEngineClient({ ...config, kind: 'ace-v8-js' });
+      }
       return new TitaniumEngineClient(config, { seatId: this.engineSeatKey(seatIndex) });
     }
     return new EngineClient(config);
