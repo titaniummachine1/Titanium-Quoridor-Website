@@ -1,20 +1,47 @@
-# Engine patches: Titanium movegen V11
+# Engine patches: Titanium movegen V11 + ACE v11
 
 This directory carries engine work that belongs in the
 [titanium-quoridor](https://github.com/titaniummachine1/titanium-quoridor)
 repository (the `engine/` submodule). This session could only push to the
-website repository, so the change ships here as a `git format-patch` file.
+website repository, so the changes ship here as a `git format-patch` series.
 
 ## Apply
 
 ```sh
 cd engine                      # the titanium-quoridor checkout
 git checkout -b movegen-v11
-git am ../engine-patches/0001-feat-movegen-V11-wall-legality-parallel-u128-flood-w.patch
-cargo test --lib               # 115 passed, 0 failed
+git am ../engine-patches/000*.patch
+cargo test --lib               # 118 passed, 0 failed
 ```
 
 Then push the engine branch and bump the website's submodule pointer.
+
+## Patch 0002 — ACE v11 (pathfix gen11_ghi, from quoridor_5.html)
+
+Ports the new ACE engine onto the v10 base (HalfPW `NET_DATA` is
+byte-identical — no net re-ingestion needed), mirroring the
+browser-shipping config node-for-node:
+
+- **ZeroFence-A GHI guard** (PLAIN, `ghiAnchor=false`): path-dependent
+  repetition zeros demote TT flags or taint the entry; tainted entries never
+  give score cutoffs.
+- **RaceProof** (ships ON, SPRT-passed +3.74 LLR): exact retrograde
+  race-endgame solver over 81×81×2 states (`src/ace/race.rs`), 64-slot LRU
+  keyed by wall-config zobrist, budget-gated in-tree solves, draw-aware eval
+  verdicts, exact root solve when both hands are empty, last-wall commitment
+  gate with deadline reserve.
+- **`wall_legal` topology gate removed** — the JS deleted
+  `wallCanBlockTopology` (its right-edge condition was the same off-by-one
+  fixed in Titanium movegen by patch 0001).
+- **ThreatPrice / WallSense are NOT ported** — they ship `false` in the JS
+  (falsifier-v2 / SPRT-killed per the source header) and no-op when false.
+- Session keys `ace-v11`, `ace-v11-ti`, `ace-v11-ti-pmc` added.
+
+**Parity oracle**: `_vendor/acev11_engine.js` (extracted from
+quoridor_5.html) + `_vendor/acev11_parity.mjs` run the JS engine under node
+against `titanium ace-bench` — 14/14 positions match move, score, depth, and
+EXACT node counts (startpos d4–d8, wall fights, jump tangles, a 24-ply line,
+a both-hands-empty race endgame, and last-wall / two-left gate lines).
 
 ## What it is
 
