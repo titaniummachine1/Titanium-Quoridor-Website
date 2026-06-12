@@ -2,8 +2,8 @@
  * Gorisanson MCTS in a Web Worker — vanilla vendor logic only (read-only ai.js).
  */
 
-import gameJs from '../../../_vendor/quoridor-mcts/src/js/game.js?raw';
-import aiJs from '../../../_vendor/quoridor-mcts/src/js/ai.js?raw';
+import gameJs from '../vendor/gorisanson/game.js?raw';
+import aiJs from '../vendor/gorisanson/ai.js?raw';
 
 const PAWN_ROWS = 9;
 const WALL_ROWS = 8;
