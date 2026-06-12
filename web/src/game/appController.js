@@ -9,7 +9,11 @@ import { GorisansonEngineClient, TitaniumEngineClient } from '../lib/localMctsEn
 import { TitaniumWasmEngineClient } from '../lib/titaniumWasmClient.js';
 import { useStaticEngineBackend } from '../lib/engineBackend.js';
 import { AceV10JsEngineClient } from '../lib/aceV10JsEngine.js';
-import { resolveAceV10Tier, aceV10DisplayName } from '../lib/aceTier.js';
+import {
+  resolveAceV10Tier,
+  aceV10DisplayName,
+  normalizeAceV10Strength,
+} from '../lib/aceTier.js';
 import { QuoridorV3EngineClient } from '../lib/quoridorV3Engine.js';
 import { PlayerType, StrengthLevel, TimeToMove } from '../lib/engineConfig.js';
 import {
@@ -440,9 +444,12 @@ export class AppController {
     const current = this.settings.playerAiSettings[index] ?? {};
     const next = Number(strengthLevel);
     this.recordSettingsChange(playerNum, 'strength', current.strengthLevel, next);
+    const storedStrength = isAceV10Family(playerType, this.engineConfigs)
+      ? normalizeAceV10Strength(next)
+      : next;
     this.rememberPlayerAiSettings(playerNum, {
       ...current,
-      strengthLevel: next,
+      strengthLevel: storedStrength,
     });
     if (isAceV10Family(playerType, this.engineConfigs)) {
       this.destroyEngineForSeat(index);
@@ -1369,8 +1376,7 @@ export class AppController {
     const normalized = normalizePlayerType(playerType);
     if (isAceV10Family(normalized, this.engineConfigs)) {
       const seatIndex = this.seatIndexForPlayerType(normalized);
-      const strength =
-        this.settings.playerAiSettings[seatIndex]?.strengthLevel ?? StrengthLevel.Intermediate;
+      const strength = this.settings.playerAiSettings[seatIndex]?.strengthLevel ?? 0;
       return aceV10DisplayName(strength);
     }
     const config = getEngineConfig(normalized, this.engineConfigs);

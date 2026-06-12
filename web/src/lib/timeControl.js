@@ -201,7 +201,7 @@ export function defaultPlayerAiSettings(playerType, engineConfigs) {
   }
   if (isAceV10Family(playerType, engineConfigs)) {
     return {
-      strengthLevel: StrengthLevel.Intermediate,
+      strengthLevel: 0,
       wallClockSeconds: ACE_WALL_CLOCK_DEFAULT,
     };
   }

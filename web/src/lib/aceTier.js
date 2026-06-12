@@ -1,56 +1,66 @@
 /**
- * ACE v10 — one player slot; strength slider picks implementation tier.
- * Left (Beg/Inter) = JS reference · Mid = Rust · Right = MoveGen+ / PMC
+ * ACE v10 — one player slot; Version slider names which port runs.
  */
 
 import { StrengthLevel } from './engineConfig.js';
 
-/** Ordered weakest → strongest (matches strength slider left → right). */
-export const ACE_V10_STRENGTH_TIERS = [
+/** Four stops, left → right; labels say exactly what runs. */
+export const ACE_V10_STRENGTH_PRESETS = [
+  { id: 0, label: 'ACE v10 JS (HTML)' },
+  { id: 1, label: 'ACE v10 Rust' },
+  { id: 2, label: 'ACE v10 MoveGen+' },
+  { id: 3, label: 'ACE v10 MoveGen+ PMC' },
+];
+
+const TIERS = [
   {
-    maxStrength: StrengthLevel.Intermediate,
     kind: 'ace-v10-js',
     engineMode: 'ace-v10-js',
-    shortLabel: 'JS',
-    tooltip: 'Original quoridor (8).html engine in a Web Worker — reference baseline',
+    label: 'ACE v10 JS (HTML)',
+    tooltip: 'quoridor (8).html engine in a Web Worker — JS reference',
   },
   {
-    maxStrength: StrengthLevel.Advanced,
     kind: 'ace',
     engineMode: 'ace-v10',
-    shortLabel: 'Rust',
-    tooltip: 'Rust 1:1 port of ACE v10 (HalfPW eval, iterative deepening)',
+    label: 'ACE v10 Rust',
+    tooltip: 'Rust 1:1 port — HalfPW eval, iterative deepening',
   },
   {
-    maxStrength: StrengthLevel.Expert,
     kind: 'ace',
     engineMode: 'ace-v10-ti',
-    shortLabel: 'MoveGen+',
-    tooltip: 'ACE v10 Rust with Titanium legal-move generation in search',
+    label: 'ACE v10 MoveGen+',
+    tooltip: 'Rust port with Titanium legal-move generation in search',
   },
   {
-    maxStrength: StrengthLevel.Alpha,
     kind: 'ace',
     engineMode: 'ace-v10-ti-pmc',
-    shortLabel: 'MoveGen+ PMC',
-    tooltip: 'ACE v10 + Titanium movegen + pseudo-MCTS root verification',
+    label: 'ACE v10 MoveGen+ PMC',
+    tooltip: 'MoveGen+ with pseudo-MCTS root verification between ID depths',
   },
 ];
 
-export function resolveAceV10Tier(strengthLevel) {
-  const level = Number(strengthLevel ?? StrengthLevel.Intermediate);
-  for (const tier of ACE_V10_STRENGTH_TIERS) {
-    if (level <= tier.maxStrength) {
-      return tier;
-    }
+/** Map stored strength (incl. legacy Beg/Inter/Adv enum) → tier index 0–3. */
+export function normalizeAceV10Strength(strengthLevel) {
+  const level = Number(strengthLevel ?? 0);
+  if (level <= StrengthLevel.Intermediate) {
+    return 0;
   }
-  return ACE_V10_STRENGTH_TIERS[ACE_V10_STRENGTH_TIERS.length - 1];
+  if (level === StrengthLevel.Advanced) {
+    return 1;
+  }
+  if (level === StrengthLevel.Expert) {
+    return 2;
+  }
+  if (level >= StrengthLevel.Alpha) {
+    return 3;
+  }
+  return Math.min(3, Math.max(0, level));
 }
 
-export function aceV10TierLabel(strengthLevel) {
-  return resolveAceV10Tier(strengthLevel).shortLabel;
+export function resolveAceV10Tier(strengthLevel) {
+  return TIERS[normalizeAceV10Strength(strengthLevel)];
 }
 
 export function aceV10DisplayName(strengthLevel) {
-  return `ACE v10 · ${aceV10TierLabel(strengthLevel)}`;
+  return resolveAceV10Tier(strengthLevel).label;
 }

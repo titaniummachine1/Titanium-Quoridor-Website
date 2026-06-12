@@ -1,3 +1,4 @@
+import { ACE_V10_STRENGTH_PRESETS } from '../lib/aceTier.js';
 import {
   STRENGTH_LEVEL_PRESETS,
   TIME_TO_MOVE_PRESETS,
@@ -125,13 +126,23 @@ function renderPlayerAiSettings(ui, playerNum) {
     return `
       <div class="player-ai-settings" data-engine="${escapeHtml(engineName)}">
         <p class="player-ai-settings__engine">${escapeHtml(engineName)}</p>
-        ${ui.isTitanium || ui.isAceV10Family
+        ${ui.isTitanium
         ? renderDiscreteSlider({
-          label: ui.isAceV10Family ? `Implementation · ${engineName}` : `Strength · ${engineName}`,
+          label: `Strength · ${engineName}`,
           settingName: 'strength-level',
           playerNum,
           value: ui.strengthLevel,
           presets: STRENGTH_LEVEL_PRESETS,
+        })
+        : ''
+      }
+        ${ui.isAceV10Family
+        ? renderDiscreteSlider({
+          label: `Version · ${engineName}`,
+          settingName: 'strength-level',
+          playerNum,
+          value: ui.strengthLevel,
+          presets: ACE_V10_STRENGTH_PRESETS,
         })
         : ''
       }

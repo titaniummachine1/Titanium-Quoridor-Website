@@ -47,7 +47,7 @@ const ACE_V10_ENGINE = {
   name: 'ACE v10',
   key: PlayerType.AceV10,
   tooltip:
-    'quoridor (8).html engine — Strength slider: JS (left) → Rust → MoveGen+ → PMC (right)',
+    'quoridor (8).html — use Version slider: JS (HTML) → Rust → MoveGen+ → MoveGen+ PMC',
 };
 
 const PLACEHOLDER_ENGINES = [
