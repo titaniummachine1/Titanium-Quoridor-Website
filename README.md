@@ -13,6 +13,34 @@ Clone with submodule:
 git clone --recurse-submodules https://github.com/titaniummachine1/Titanium-Quoridor-Website.git
 ```
 
+## Live site (GitHub Pages)
+
+**URL:** https://titaniummachine1.github.io/Titanium-Quoridor-Website/
+
+Pushes to `main` auto-deploy via `.github/workflows/deploy-pages.yml`.
+
+**One-time setup** (repo owner, on GitHub):
+
+1. Repo → **Settings** → **Pages**
+2. **Build and deployment** → Source: **GitHub Actions**
+3. Push to `main` (or run the workflow manually under **Actions**)
+
+**Local dev** (Titanium Rust via proxy — not available on static Pages):
+
+```bash
+cd web && npm install && npm run dev
+```
+
+**Test the Pages build locally:**
+
+```bash
+cd web && npm run build:pages && npm run preview:pages
+```
+
+On GitHub Pages, in-browser engines work (Gorisanson, Ace v8, Quoridor v3) plus
+remote Ishtar/Ka WebSocket AIs. The Rust Titanium binary needs `npm run dev` locally
+or a future WASM bundle on Pages.
+
 Layout:
 
 - `web/` — the playable website

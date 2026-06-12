@@ -4,10 +4,13 @@ import { fileURLToPath } from 'node:url';
 import { titaniumProxyPlugin } from './vite-titanium-proxy.mjs';
 
 const rootDir = path.dirname(fileURLToPath(import.meta.url));
-
-export default defineConfig({
+export default defineConfig(({ mode }) => {
+  const ghPages = mode === 'ghpages';
+  return {
   root: '.',
-  plugins: [titaniumProxyPlugin()],
+  // Project Pages URL: https://titaniummachine1.github.io/Titanium-Quoridor-Website/
+  base: ghPages ? '/Titanium-Quoridor-Website/' : '/',
+  plugins: ghPages ? [] : [titaniumProxyPlugin()],
   server: {
     port: 5173,
     open: true,
@@ -18,4 +21,5 @@ export default defineConfig({
   worker: {
     format: 'es',
   },
+};
 });
