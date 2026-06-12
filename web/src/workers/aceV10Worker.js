@@ -1,8 +1,10 @@
 /**
  * ACE v10 engine in a Web Worker — extract from quoridor (8).html.
  * Streams iterative-deepening progress (depth log + total nodes) during think.
+ * Final move is filtered through Titanium WASM legal_moves (rules oracle parity).
  */
 
+import init, { WasmEngine } from '../wasm/titanium/titanium.js';
 import engineJs from '../vendor/ace-v10/engine.js?raw';
 import { algebraicToAceMove, aceMoveToAlgebraic } from '../lib/aceV8Codec.js';
 
@@ -31,17 +33,12 @@ const bootstrap = new Function(
     }
   }
 
-  /** Mirror Search.prototype.think — posts progress after each completed ID depth. */
   function thinkStreaming(timeMs, maxDepth, full) {
     var t0 = Date.now();
     search.deadline = t0 + timeMs;
     search.nodes = 0;
     search.rootBest = 0;
     search.rootScore = 0;
-    var g = search.g;
-    var sp0 = g.pawn[0], sp1 = g.pawn[1], sw0 = g.wl[0], sw1 = g.wl[1], sturn = g.turn;
-    var slo = g.hashLo, shi = g.hashHi, shist = g.histLen, slwp = g.lastWallPly, sstamp = g.wallStamp;
-    var shw = g.hw.slice(), svw = g.vw.slice(), sblocked = g.blocked.slice();
     var lastBest = 0, lastScore = 0, lastDepth = 0, stable = 0;
     var depthLog = [];
     maxDepth = maxDepth || 30;
@@ -79,24 +76,22 @@ const bootstrap = new Function(
         lastBest = search.rootBest;
         lastScore = sc;
         lastDepth = d;
+        var elapsedMs = Date.now() - t0;
+        var pv = lastBest ? aceMoveToAlgebraic(lastBest) : '';
         depthLog.push({
           depth: d,
-          score: sc,
+          score: lastScore,
           nodes: search.nodes,
-          pv: lastBest ? aceMoveToAlgebraic(lastBest) : '',
+          elapsedMs: elapsedMs,
+          marginalNodes: search.nodes - (depthLog.length ? depthLog[depthLog.length - 1].nodes : 0),
+          pv: pv,
         });
         emitProgress();
-        if (sc > MATE - 200 || sc < -(MATE - 200)) break;
+        if (sc > 100000 - 200 || sc < -(100000 - 200)) break;
         if (!full && d >= 9 && stable >= 3 && lastScore > -120 && Date.now() - t0 > timeMs * 0.3) break;
-      } catch (err) {
-        if (err === 'time') {
-          g.pawn[0] = sp0; g.pawn[1] = sp1; g.wl[0] = sw0; g.wl[1] = sw1; g.turn = sturn;
-          g.hw.set(shw); g.vw.set(svw); g.blocked.set(sblocked);
-          g.hashLo = slo; g.hashHi = shi; g.histLen = shist; g.lastWallPly = slwp; g.wallStamp = sstamp;
-          search.cachedStamp = -1;
-          break;
-        }
-        throw err;
+      } catch (e) {
+        if (e !== 'time') throw e;
+        break;
       }
       if (Date.now() - t0 > timeMs * (lastScore < -80 ? 0.92 : 0.85)) break;
     }
@@ -107,6 +102,7 @@ const bootstrap = new Function(
       lastBest = search.moveBuf[0][0];
     }
 
+    var dist = pathDistances();
     return {
       move: lastBest,
       score: lastScore,
@@ -114,42 +110,74 @@ const bootstrap = new Function(
       nodes: search.nodes,
       ms: Date.now() - t0,
       depthLog: depthLog,
+      whiteDist: dist.whiteDist,
+      blackDist: dist.blackDist,
     };
   }
 
-  self.onmessage = function (ev) {
-    var data = ev.data;
-    try {
-      loadAlgebraicMoves(data.algebraicMoves || []);
-      if (game.winner() >= 0) {
-        postMessage({ type: 'error', message: 'position already decided' });
-        return;
-      }
-
-      var timeMs = Math.max(50, Number(data.timeMs) || 4000);
-      var maxDepth = Math.min(30, Math.max(1, Number(data.maxDepth) || 30));
-      var result = thinkStreaming(timeMs, maxDepth, false);
-      var algebraicMove = aceMoveToAlgebraic(result.move);
-      var dist = pathDistances();
-      postMessage({
-        type: 'bestmove',
-        algebraicMove: algebraicMove,
-        nodes: result.nodes,
-        searchDepth: result.depth,
-        rootScore: result.score,
-        depthLog: result.depthLog,
-        stoppedBy: 'ace-v10-js',
-        mode: 'ace-v10-js',
-        profileName: 'ACE v10 (JS)',
-        whiteDist: dist.whiteDist,
-        blackDist: dist.blackDist,
-        ms: result.ms,
-      });
-    } catch (err) {
-      postMessage({ type: 'error', message: String(err?.message || err) });
-    }
-  };
+  return { loadAlgebraicMoves, thinkStreaming, isTerminal: function () { return game.winner() >= 0; } };
 `,
 );
 
-bootstrap(postMessage, performance, algebraicToAceMove, aceMoveToAlgebraic);
+const ace = bootstrap(postMessage, performance, algebraicToAceMove, aceMoveToAlgebraic);
+
+let wasmInit = null;
+let wasmEngine = null;
+
+async function ensureWasm() {
+  if (!wasmInit) {
+    wasmInit = init().then(() => {
+      wasmEngine = new WasmEngine();
+    });
+  }
+  await wasmInit;
+  return wasmEngine;
+}
+
+async function oracleBestMove(history, aceMoveInt) {
+  const wasm = await ensureWasm();
+  wasm.reset();
+  if (history.length > 0) {
+    wasm.position(history.join(' '));
+  }
+  const aceAlg = aceMoveToAlgebraic(aceMoveInt);
+  const legal = wasm.legal_moves().split(/\s+/).filter(Boolean);
+  if (legal.includes(aceAlg)) {
+    return aceAlg;
+  }
+  return legal[0] ?? aceAlg;
+}
+
+self.onmessage = async (ev) => {
+  const data = ev.data;
+  try {
+    ace.loadAlgebraicMoves(data.algebraicMoves || []);
+    if (ace.isTerminal()) {
+      postMessage({ type: 'error', message: 'position already decided' });
+      return;
+    }
+
+    const timeMs = Math.max(50, Number(data.timeMs) || 4000);
+    const maxDepth = Math.min(30, Math.max(1, Number(data.maxDepth) || 30));
+    const result = ace.thinkStreaming(timeMs, maxDepth, false);
+    const history = data.algebraicMoves ?? [];
+    const algebraicMove = await oracleBestMove(history, result.move);
+
+    postMessage({
+      type: 'bestmove',
+      algebraicMove,
+      nodes: result.nodes,
+      searchDepth: result.depth,
+      rootScore: result.score,
+      depthLog: result.depthLog,
+      stoppedBy: 'ace-v10-js',
+      mode: 'ace-v10-js',
+      profileName: 'ACE v10 (JS)',
+      whiteDist: result.whiteDist,
+      blackDist: result.blackDist,
+      ms: result.ms,
+    });
+  } catch (err) {
+    postMessage({ type: 'error', message: String(err?.message || err) });
+  }
+};

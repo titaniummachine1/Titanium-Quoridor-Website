@@ -288,7 +288,7 @@ class QuoridorBoard {
     if (this.collidesWithExistingWall(wall)) {
       return false;
     }
-    // Matches Rust `can_wall_block_topology` — off-topology walls cannot cage anyone.
+    // Off-topology walls cannot cage anyone — legal without BFS (matches Titanium `is_legal_wall`).
     if (!this.canWallBlock(wall)) {
       return true;
     }

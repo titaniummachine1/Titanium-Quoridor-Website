@@ -130,9 +130,41 @@ Quoridor.prototype.hasPath = function (player) {
   return false;
 };
 
+/** Matches Titanium `can_wall_block_topology` / site `canWallBlock`. */
+Quoridor.prototype.wallCanBlockTopology = function (type, slot) {
+  var aceR = (slot / 8) | 0, aceC = slot % 8;
+  var row = 7 - aceR, col = aceC;
+  var jsCol = col + 1, jsRow = row + 1;
+  var onA, onB;
+  if (type === 0) { onA = jsCol === 1; onB = jsCol === 9; }
+  else { onA = jsRow === 8; onB = jsRow === 1; }
+  var self = this;
+  function hasTi(tiRow, tiCol, ori) {
+    if (tiRow < 0 || tiRow > 7 || tiCol < 0 || tiCol > 7) return false;
+    var s = (7 - tiRow) * 8 + tiCol;
+    return ori === 0 ? self.hw[s] : self.vw[s];
+  }
+  function at(tiRow, tiCol, drs, ori) {
+    for (var i = 0; i < drs.length; i++) { tiRow += drs[i][0]; tiCol += drs[i][1]; }
+    return hasTi(tiRow, tiCol, ori);
+  }
+  var sideA, sideB, middle;
+  if (type === 0) {
+    sideA = onA || at(row, col, [[0, -1]], 1) || at(row, col, [[1, 0], [0, -1]], 1) || at(row, col, [[-1, 0], [0, -1]], 1) || at(row, col, [[0, -1], [0, -1]], 0);
+    sideB = onB || at(row, col, [[0, 1]], 1) || at(row, col, [[1, 0], [0, 1]], 1) || at(row, col, [[-1, 0], [0, 1]], 1) || at(row, col, [[0, 1], [0, 1]], 0);
+    middle = at(row, col, [[1, 0]], 1) || at(row, col, [[-1, 0]], 1);
+  } else {
+    sideA = onA || at(row, col, [[1, 0]], 0) || at(row, col, [[0, -1], [1, 0]], 0) || at(row, col, [[0, 1], [1, 0]], 0) || at(row, col, [[1, 0], [1, 0]], 1);
+    sideB = onB || at(row, col, [[-1, 0]], 0) || at(row, col, [[0, -1], [-1, 0]], 0) || at(row, col, [[0, 1], [-1, 0]], 0) || at(row, col, [[-1, 0], [-1, 0]], 1);
+    middle = at(row, col, [[0, -1]], 0) || at(row, col, [[0, 1]], 0);
+  }
+  return (sideA && sideB) || (sideA && middle) || (sideB && middle);
+};
+
 Quoridor.prototype.wallLegal = function (type, slot) {
   if (this.wl[this.turn] <= 0) return false;
   if (!this.wallFits(type, slot)) return false;
+  if (!this.wallCanBlockTopology(type, slot)) return true;
   if (!this.wallNeedsPathCheck(type, slot)) return true;
   this.setWallBits(type, slot, true);
   var ok = this.hasPath(0) && this.hasPath(1);
