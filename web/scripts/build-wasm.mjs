@@ -11,18 +11,23 @@ const webDir = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const engineDir = path.resolve(webDir, '..', 'engine');
 const outDir = path.join(webDir, 'src', 'wasm', 'titanium');
 
+// Cargo flags (--no-default-features, --features) must follow `--` or wasm-pack
+// forwards --out-dir/--out-name to cargo and the build fails on modern toolchains.
 const result = spawnSync(
   'wasm-pack',
   [
     'build',
     '--release',
-    '--no-default-features',
-    '--features',
-    'wasm',
+    '--target',
+    'web',
     '--out-dir',
     outDir,
     '--out-name',
     'titanium',
+    '--',
+    '--no-default-features',
+    '--features',
+    'wasm',
   ],
   { cwd: engineDir, stdio: 'inherit' },
 );

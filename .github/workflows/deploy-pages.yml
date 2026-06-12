@@ -20,13 +20,15 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: false
 
       - name: Init engine submodule
-        run: git submodule update --init engine
+        run: git -c submodule.recurse=false submodule update --init --depth 1 engine
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -37,7 +39,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
           cache-dependency-path: web/package-lock.json
 
