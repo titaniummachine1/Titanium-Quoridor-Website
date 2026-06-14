@@ -86,7 +86,7 @@ export function sliderPositionFromVisits(visits) {
 /** Map retired UI keys to their current engine slot. */
 export function normalizePlayerType(playerType) {
   if (playerType === PlayerType.AceV7 || playerType === PlayerType.AceV7Ti) {
-    return PlayerType.AceV10;
+    return PlayerType.AceV13;
   }
   if (
     playerType === PlayerType.AceV8 ||
@@ -118,8 +118,20 @@ export function isAceV10Family(playerType, engineConfigs) {
   );
 }
 
+export function isAceV13Family(playerType, engineConfigs) {
+  const normalized = normalizePlayerType(playerType);
+  return (
+    normalized === PlayerType.AceV13 ||
+    getEngineConfig(normalized, engineConfigs)?.kind === 'ace-v13-family'
+  );
+}
+
 export function isAceFamily(playerType, engineConfigs) {
-  return isAceV8Family(playerType, engineConfigs) || isAceV10Family(playerType, engineConfigs);
+  return (
+    isAceV8Family(playerType, engineConfigs) ||
+    isAceV10Family(playerType, engineConfigs) ||
+    isAceV13Family(playerType, engineConfigs)
+  );
 }
 
 export function getEngineConfig(playerType, engineConfigs) {
@@ -176,7 +188,8 @@ export function isLocalMctsEngine(playerType, engineConfigs) {
     kind === 'titanium' ||
     kind === 'quoridor-v3' ||
     kind === 'ace-v8-family' ||
-    kind === 'ace-v10-family'
+    kind === 'ace-v10-family' ||
+    kind === 'ace-v13-family'
   );
 }
 

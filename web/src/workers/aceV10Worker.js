@@ -1,10 +1,7 @@
 /**
- * ACE v10 engine in a Web Worker — extract from quoridor (8).html.
- * Streams iterative-deepening progress (depth log + total nodes) during think.
- * Final move is filtered through Titanium WASM legal_moves (rules oracle parity).
+ * ACE v10 engine in a Web Worker — extract from quoridor HTML (pure JS; no WASM).
  */
 
-import init, { WasmEngine } from '../wasm/titanium/titanium.js';
 import engineJs from '../vendor/ace-v10/engine.js?raw';
 import { algebraicToAceMove, aceMoveToAlgebraic } from '../lib/aceV8Codec.js';
 
@@ -37,9 +34,9 @@ const bootstrap = new Function(
     var t0 = Date.now();
     search.deadline = t0 + timeMs;
     search.nodes = 0;
-    search.rootBest = 0;
+    search.rootBest = -1;
     search.rootScore = 0;
-    var lastBest = 0, lastScore = 0, lastDepth = 0, stable = 0;
+    var lastBest = -1, lastScore = 0, lastDepth = 0, stable = 0;
     var depthLog = [];
     maxDepth = maxDepth || 30;
 
@@ -77,7 +74,7 @@ const bootstrap = new Function(
         lastScore = sc;
         lastDepth = d;
         var elapsedMs = Date.now() - t0;
-        var pv = lastBest ? aceMoveToAlgebraic(lastBest) : '';
+        var pv = lastBest >= 0 ? aceMoveToAlgebraic(lastBest) : '';
         depthLog.push({
           depth: d,
           score: lastScore,
@@ -96,7 +93,7 @@ const bootstrap = new Function(
       if (Date.now() - t0 > timeMs * (lastScore < -80 ? 0.92 : 0.85)) break;
     }
 
-    if (!lastBest) {
+    if (lastBest < 0) {
       search.refreshDist(0);
       search.genMoves(0, true);
       lastBest = search.moveBuf[0][0];
@@ -121,34 +118,7 @@ const bootstrap = new Function(
 
 const ace = bootstrap(postMessage, performance, algebraicToAceMove, aceMoveToAlgebraic);
 
-let wasmInit = null;
-let wasmEngine = null;
-
-async function ensureWasm() {
-  if (!wasmInit) {
-    wasmInit = init().then(() => {
-      wasmEngine = new WasmEngine();
-    });
-  }
-  await wasmInit;
-  return wasmEngine;
-}
-
-async function oracleBestMove(history, aceMoveInt) {
-  const wasm = await ensureWasm();
-  wasm.reset();
-  if (history.length > 0) {
-    wasm.position(history.join(' '));
-  }
-  const aceAlg = aceMoveToAlgebraic(aceMoveInt);
-  const legal = wasm.legal_moves().split(/\s+/).filter(Boolean);
-  if (legal.includes(aceAlg)) {
-    return aceAlg;
-  }
-  return legal[0] ?? aceAlg;
-}
-
-self.onmessage = async (ev) => {
+self.onmessage = (ev) => {
   const data = ev.data;
   try {
     ace.loadAlgebraicMoves(data.algebraicMoves || []);
@@ -160,8 +130,7 @@ self.onmessage = async (ev) => {
     const timeMs = Math.max(50, Number(data.timeMs) || 4000);
     const maxDepth = Math.min(30, Math.max(1, Number(data.maxDepth) || 30));
     const result = ace.thinkStreaming(timeMs, maxDepth, false);
-    const history = data.algebraicMoves ?? [];
-    const algebraicMove = await oracleBestMove(history, result.move);
+    const algebraicMove = aceMoveToAlgebraic(result.move);
 
     postMessage({
       type: 'bestmove',

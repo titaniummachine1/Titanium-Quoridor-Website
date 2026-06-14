@@ -1,5 +1,6 @@
 /**
- * Dev-server proxy — browser calls /api/titanium/genmove → Rust titanium binary.
+ * Dev-server proxy — browser calls /api/titanium/* → native Rust titanium binary.
+ * GitHub Pages (ghpages mode) uses WASM workers instead; no proxy, no .exe.
  * Supports SSE progress stream + wall-clock / visit budget from UI sliders.
  */
 

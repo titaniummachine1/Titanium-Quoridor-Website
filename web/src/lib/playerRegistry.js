@@ -58,6 +58,14 @@ const ACE_V10_ENGINE = {
     'ACE v10 — use Version slider: JS (HTML) → Rust → MoveGen+ → MoveGen+ EME',
 };
 
+const ACE_V13_ENGINE = {
+  kind: 'ace-v13-family',
+  name: 'ACE v13',
+  key: PlayerType.AceV13,
+  tooltip:
+    'ACE v13 — use Version slider: JS (HTML) → Rust → MoveGen+ (no EME)',
+};
+
 const PLACEHOLDER_ENGINES = [
   {
     kind: 'placeholder',
@@ -79,6 +87,7 @@ export function getAllEngineConfigs() {
     TITANIUM_ENGINE,
     ACE_V8_ENGINE,
     ACE_V10_ENGINE,
+    ACE_V13_ENGINE,
     ...remote,
     ...PLACEHOLDER_ENGINES,
   ];
@@ -122,6 +131,12 @@ export function getPlayerOptionGroups() {
           label: ACE_V10_ENGINE.name,
           disabled: false,
           tooltip: ACE_V10_ENGINE.tooltip,
+        },
+        {
+          value: PlayerType.AceV13,
+          label: ACE_V13_ENGINE.name,
+          disabled: false,
+          tooltip: ACE_V13_ENGINE.tooltip,
         },
       ],
     },
@@ -197,6 +212,9 @@ const SEARCH_STOP_LABELS = {
   'ace-v10': 'ACE v10 Rust',
   'ace-v10-ti': 'ACE v10 MoveGen+',
   'ace-v10-ti-pmc': 'ACE v10 MoveGen+ EME',
+  'ace-v13-js': 'ACE v13 JS',
+  'ace-v13': 'ACE v13 Rust',
+  'ace-v13-ti': 'ACE v13 MoveGen+',
   mcts: 'MCTS',
   hybrid: 'hybrid',
   race: 'win path',
@@ -237,13 +255,20 @@ function buildSearchDepthHeader(header, { live }) {
     header.stoppedBy === 'ace-v10' ||
     header.stoppedBy === 'ace-v10-ti' ||
     header.stoppedBy === 'ace-v10-ti-pmc' ||
+    header.stoppedBy === 'ace-v13-js' ||
+    header.stoppedBy === 'ace-v13' ||
+    header.stoppedBy === 'ace-v13-ti' ||
     header.mode === 'ace-v10-js' ||
     header.mode === 'ace-v10' ||
     header.mode === 'ace-v10-ti' ||
     header.mode === 'ace-v10-ti-pmc' ||
+    header.mode === 'ace-v13-js' ||
+    header.mode === 'ace-v13' ||
+    header.mode === 'ace-v13-ti' ||
     header.playerLabel?.includes('Titanium') ||
     header.playerLabel?.includes('Quoridor v3') ||
-    header.playerLabel?.includes('ACE v8');
+    header.playerLabel?.includes('ACE v8') ||
+    header.playerLabel?.includes('ACE v13');
   if (header.nodes != null) {
     parts.push(`${Number(header.nodes).toLocaleString()} nodes`);
   } else if (header.simulations != null && !isAb) {

@@ -45,7 +45,9 @@ const PlayerType = {
   TitaniumMinimax: 'titanium-minimax',
   /** Unified ACE v10 — strength slider picks JS / Rust / MoveGen+ / PMC tier */
   AceV10: 'ace-v10',
-  /** @deprecated legacy keys — remapped to AceV10 in normalizePlayerType() */
+  /** Unified ACE v13 — strength slider picks JS / Rust / MoveGen+ (no EME) */
+  AceV13: 'ace-v13',
+  /** @deprecated legacy keys — remapped to AceV13 in normalizePlayerType() */
   AceV7: 'ace-v7',
   AceV7Ti: 'ace-v7-ti',
   AceV8: 'ace-v8',

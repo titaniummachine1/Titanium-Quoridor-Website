@@ -12,6 +12,7 @@ import { validateMovesWithRust } from '../lib/rustMoveValidate.js';
 import { resolveOnBestMoveResult } from '../lib/onBestMoveResult.js';
 import { AceV10JsEngineClient } from '../lib/aceV10JsEngine.js';
 import { AceV13JsEngineClient } from '../lib/aceV13JsEngine.js';
+import { AceRustWasmEngineClient } from '../lib/aceRustWasmClient.js';
 import {
   resolveAceTier,
   aceDisplayName,
@@ -186,7 +187,7 @@ export class AppController {
 
     const [aceWhiteAi, aceBlackAi] = defaultAceCompareAiSettings();
     this.settings = {
-      players: [PlayerType.AceV10, PlayerType.AceV10],
+      players: [PlayerType.AceV13, PlayerType.AceV13],
       playerAiSettings: [aceWhiteAi, aceBlackAi],
       playerAiSettingsMemory: [{}, {}],
       rotateBoard: false,
@@ -439,7 +440,7 @@ export class AppController {
       isLocalMcts: isLocalMctsEngine(playerType, this.engineConfigs),
       isRemote: isRemoteEngine(playerType, this.engineConfigs),
       strengthLevel: isAceFamily(playerType, this.engineConfigs)
-        ? migrateAceV10Strength(current?.strengthLevel ?? 0)
+        ? clampAceV10Tier(migrateAceV10Strength(current?.strengthLevel ?? 0), playerType)
         : (current?.strengthLevel ?? StrengthLevel.Alpha),
       timeToMove: current?.timeToMove ?? TimeToMove.Short,
       wallClockSeconds: current?.wallClockSeconds ?? WALL_CLOCK_RANGE.defaultSeconds,
@@ -476,7 +477,7 @@ export class AppController {
     const next = Number(strengthLevel);
     this.recordSettingsChange(playerNum, 'strength', current.strengthLevel, next);
     const storedStrength = isAceFamily(playerType, this.engineConfigs)
-      ? clampAceV10Tier(next)
+      ? clampAceV10Tier(next, playerType)
       : next;
     this.rememberPlayerAiSettings(playerNum, {
       ...current,
@@ -1144,8 +1145,8 @@ export class AppController {
       if (generation === 13) return new AceV13JsEngineClient(config);
       return new AceV10JsEngineClient(config);
     }
-    if (useStaticEngineBackend() && generation === 10) {
-      return new AceV10JsEngineClient(config);
+    if (useStaticEngineBackend()) {
+      return new AceRustWasmEngineClient({ ...config, engineMode: tier.engineMode });
     }
     return new TitaniumEngineClient(
       { ...config, kind: 'ace', engineMode: tier.engineMode },
@@ -1203,9 +1204,10 @@ export class AppController {
     if (isAceFamily(playerType, this.engineConfigs)) {
       const tier = resolveAceTier(ai.strengthLevel, playerType);
       const generation = aceGenerationFromPlayerType(playerType);
-      const backend =
-        useStaticEngineBackend() || (tier.kind.endsWith('-js') && generation === 10)
-          ? 'js'
+      const backend = tier.kind.endsWith('-js')
+        ? 'js'
+        : useStaticEngineBackend()
+          ? 'wasm'
           : 'rust';
       return `${playerType}|${backend}|${tier.engineMode}`;
     }
