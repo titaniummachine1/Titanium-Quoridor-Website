@@ -1,3 +1,4 @@
+import { BUILD_LABEL } from '../lib/buildInfo.js';
 import { formatCoordinate, toAlgebraic } from '../lib/gameLogic.js';
 import { encodeReplayFromActions } from '../lib/replayCode.js';
 import { playerColorName } from '../lib/playerColors.js';
@@ -48,6 +49,7 @@ export function renderGameFooter(container, state) {
       <button type="button" class="btn btn--small" data-action="copy-game-code" ${hasMoves ? '' : 'disabled'}>Copy game</button>
       <button type="button" class="btn btn--small" data-action="copy-full-report" ${hasReport ? '' : 'disabled'}>Copy game report</button>
     </div>
+    <div class="game-footer__build" title="GitHub Pages deploy">${escapeHtml(BUILD_LABEL)} · defaults ACE v13</div>
   `;
 
   wireCopyButton(container, '[data-action="copy-game-code"]', () => buildGameCodeText(state), 'Copy game');

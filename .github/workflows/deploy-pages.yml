@@ -45,6 +45,8 @@ jobs:
 
       - name: Build WASM + static site
         working-directory: web
+        env:
+          VITE_BUILD_SHA: ${{ github.sha }}
         run: |
           npm ci
           npm run build:pages

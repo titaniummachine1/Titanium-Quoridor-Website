@@ -99,6 +99,9 @@ export function normalizePlayerType(playerType) {
   if (playerType === PlayerType.Titanium) {
     return PlayerType.TitaniumMinimax;
   }
+  if (playerType === PlayerType.AceV10) {
+    return PlayerType.AceV13;
+  }
   return playerType;
 }
 
