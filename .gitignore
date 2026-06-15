@@ -22,3 +22,8 @@ id_rsa
 id_rsa.*
 *.kdbx
 .wrangler/
+# KA AI Data folder (big analysis + old engines)
+KaAiData/
+"KaAiData/"
+KA\ AI\ DATA/
+"KA AI DATA/"

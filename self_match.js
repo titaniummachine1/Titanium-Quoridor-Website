@@ -19,22 +19,25 @@
  *
  * PONDERING DESIGN
  * ─────────────────
- * Each engine has ONE persistent session process that stays alive for the full
- * game, keeping its TT, history, and killers warm (state-retention).
+ * Each engine has ONE persistent session process that lives for the full game,
+ * keeping its TT, history, and killers warm across moves.
  *
- * On every opponent turn, an *ephemeral* ponder process is spawned for the
- * side whose turn it ISN'T:
+ * While the opponent thinks, the waiting engine immediately starts pondering the
+ * PREDICTED opponent reply on its OWN persistent process (same TT):
  *
- *   A's turn:  real A.think(2s)  ‖  ephemeral B.ponder([moves+predicted_A_reply], 2s)
- *   B's turn:  real B.think(2s)  ‖  ephemeral A.ponder([moves+predicted_B_reply], 2s)
+ *   A's turn:  A.bestMove(moves, timeA)  ‖  B.bestMove([moves+predictedAMove], ponderTime)
+ *   B's turn:  B.bestMove(moves, timeB)  ‖  A.bestMove([moves+predictedBMove], ponderTime)
  *
- * "predicted_X_reply" comes from the PV[1] of the last search by the OTHER engine.
- * If the prediction was correct the ponder result is used as the engine's next
- * move (instant deep reply). The ephemeral processes are separate from the
- * persistent real engines, so real-engine state is never disturbed by pondering.
+ * "predictedXMove" comes from PV[1] of the most recent search by the OTHER engine.
  *
- * CPU is NOT shared between the two sides' searches: each process runs on its
- * own OS thread(s), giving trustworthy strength measurements.
+ *   HIT  (opponent played the predicted move): the engine's TT is deep on that
+ *        position; dynamic-ID startup skips shallow depths → effectively one
+ *        uninterrupted search across ponder + think windows.
+ *   MISS: engine resets to the real position; the ponder's TT entries may still
+ *        partially help (hash-keyed), but it's essentially a fresh search.
+ *
+ * CPU is NOT shared between the two sides' searches: each runs on its own OS
+ * thread(s), giving trustworthy strength measurements.
  *
  * DUMP FORMAT (stdout, --dump-games):
  *   GAME e2 e8 e3 ...
@@ -176,13 +179,19 @@ async function playGame(opts, gl, gameIdx, aIsP1) {
   const engA = new Engine(opts.bin, opts.engineA);
   const engB = new Engine(opts.bin, opts.engineB);
 
-  // Pondering state: what each engine predicted the opponent would play (from PV[1]).
-  // Ephemeral ponder processes run during the opponent's think (free wall-clock time)
-  // and warm the TT on the predicted continuation — but the persistent engine ALWAYS
-  // searches for its full time budget.  No instant replies: a ponder hit gives a head
-  // start (warm TT via dynamic-ID startup) but we keep thinking until time is up.
-  let predictedBMove = null;  // what A predicts B will play (from A's last PV[1])
-  let predictedAMove = null;  // what B predicts A will play (from B's last PV[1])
+  // PONDERING — one continuous search per engine, no ephemeral processes:
+  //
+  // After engine X plays, X immediately starts pondering the predicted opponent reply
+  // on X's OWN persistent engine (same process, same TT), in parallel with the
+  // opponent's real think.  When the opponent plays:
+  //
+  //   HIT  (opponent played the predicted move): X's session already has this position
+  //        applied and the TT is deep.  The next `go timeX` skips shallow depths via
+  //        dynamic-ID startup — effectively one uninterrupted search across both windows.
+  //   MISS: session resets to the actual position; the ponder's TT entries may partially
+  //        help (hash-keyed), but it's essentially a fresh timeX-second search.
+  let predictedBMove = null;  // A's prediction of B's next move (from A's PV[1])
+  let predictedAMove = null;  // B's prediction of A's next move (from B's PV[1])
 
   let winner = 0;
 
@@ -197,55 +206,32 @@ async function playGame(opts, gl, gameIdx, aIsP1) {
       let mv;
 
       if (aTurn) {
-        // ── A's turn ──────────────────────────────────────────────────────
-        // Concurrently: B ponders its reply to predictedAMove while A thinks.
-        // B's ponder runs for free (wall-clock) during A's think time.
-        let bPonderProc    = null;
-        let bPonderPromise = null;
-        if (!opts.noPonder && predictedAMove !== null && opts.ponderTime > 0) {
-          bPonderProc    = new Engine(opts.bin, opts.engineB);
-          bPonderPromise = bPonderProc.bestMove([...moves, predictedAMove], opts.ponderTime);
-        }
+        // A thinks on the real position; B ponders A's predicted reply in parallel.
+        // Both use their own persistent engines (separate OS processes → no CPU sharing).
+        // On B's next turn, if A played predictedAMove, B's TT is hot → continuous search.
+        const aThink  = engA.bestMove(moves, opts.timeA);
+        const bPonder = (!opts.noPonder && predictedAMove !== null && opts.ponderTime > 0)
+          ? engB.bestMove([...moves, predictedAMove], opts.ponderTime)
+          : null;
 
-        // Always search with the persistent engine for the full time budget.
-        // On a ponder hit the engine's dynamic-ID startup skips shallow depths
-        // (TT already has a deep entry) giving more time to search deeper — but
-        // we never cut the search short just because a ponder result is available.
-        const res      = await engA.bestMove(moves, opts.timeA);
-        mv             = res.move;
-        predictedBMove = res.pvOpponentReply;
-
-        // Collect B's ponder; if A played what B predicted, B already knows its reply.
-        if (bPonderPromise) {
-          const pRes = await bPonderPromise;
-          bPonderProc.destroy();
-          // Store so B's persistent engine can skip those shallow depths next turn
-          // (the ponder warmed the position — but B will still search full timeB).
-          if (mv === predictedAMove) predictedAMove = pRes.pvOpponentReply ?? predictedAMove;
-        }
+        const [aRes] = await Promise.all([aThink, bPonder ?? Promise.resolve(null)]);
+        mv             = aRes.move;
+        predictedBMove = aRes.pvOpponentReply;
 
         if (!mv || mv === '(none)') { winner = aIsP1 ? 2 : 1; break; }
 
       } else {
-        // ── B's turn ──────────────────────────────────────────────────────
-        // Concurrently: A ponders its reply to predictedBMove while B thinks.
-        let aPonderProc    = null;
-        let aPonderPromise = null;
-        if (!opts.noPonder && predictedBMove !== null && opts.ponderTime > 0) {
-          aPonderProc    = new Engine(opts.bin, opts.engineA);
-          aPonderPromise = aPonderProc.bestMove([...moves, predictedBMove], opts.ponderTime);
-        }
+        // B thinks; A ponders B's predicted reply in parallel on A's persistent engine.
+        // On A's next turn, if B played predictedBMove, A's next `go timeA` continues
+        // the same search tree from a deep TT state — ponder + think = one search.
+        const bThink  = engB.bestMove(moves, opts.timeB);
+        const aPonder = (!opts.noPonder && predictedBMove !== null && opts.ponderTime > 0)
+          ? engA.bestMove([...moves, predictedBMove], opts.ponderTime)
+          : null;
 
-        const res      = await engB.bestMove(moves, opts.timeB);
-        mv             = res.move;
-        predictedAMove = res.pvOpponentReply;
-
-        // Collect A's ponder.
-        if (aPonderPromise) {
-          const pRes = await aPonderPromise;
-          aPonderProc.destroy();
-          if (mv === predictedBMove) predictedBMove = pRes.pvOpponentReply ?? predictedBMove;
-        }
+        const [bRes] = await Promise.all([bThink, aPonder ?? Promise.resolve(null)]);
+        mv             = bRes.move;
+        predictedAMove = bRes.pvOpponentReply;
 
         if (!mv || mv === '(none)') { winner = aIsP1 ? 1 : 2; break; }
       }
