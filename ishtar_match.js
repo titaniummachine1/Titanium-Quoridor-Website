@@ -11,6 +11,7 @@
  *     --concurrency K  games in flight at once (default 4)
  *     --bin PATH       titanium binary (default ../engine/target/release/titanium.exe)
  *     --max-ply N      adjudicate as loss-by-timeout cap (default 300)
+ *     --dump-games     emit GAME/RESULT lines to stdout; route progress/summary to stderr
  *
  * Color is swapped every game so each opening is played from both sides.
  *
@@ -19,6 +20,13 @@
  * free — that's why oversubscribing (concurrency > cores) can help here, unlike
  * local-vs-local. But if too many of OUR engines think at once they steal each
  * other's time; keep concurrency near core count unless games are network-bound.
+ *
+ * DUMP FORMAT (--dump-games, one game per two lines, W=P1 wins B=P2 wins):
+ *   GAME e5 e5 d3h ...
+ *   RESULT W
+ * Draws (ply-cap adjudications where d1==d2) are omitted. This matches the
+ * format produced by `titanium match --dump-games` so parse_dump_games() in
+ * datagen.py handles both sources identically.
  */
 
 const { spawn } = require('child_process');
@@ -36,6 +44,7 @@ function parseArgs(argv) {
     concurrency: 4,
     bin: path.resolve(__dirname, '../engine/target/release/titanium.exe'),
     maxPly: 300,
+    dumpGames: false,
   };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
@@ -48,6 +57,7 @@ function parseArgs(argv) {
     else if (a === '--concurrency') o.concurrency = Number(next());
     else if (a === '--bin') o.bin = next();
     else if (a === '--max-ply') o.maxPly = Number(next());
+    else if (a === '--dump-games') o.dumpGames = true;
   }
   return o;
 }
@@ -83,7 +93,7 @@ class OurEngine {
   /** Set position to the full move list, then search; returns best move string. */
   async bestMove(moves, seconds) {
     this._send(moves.length ? `position ${moves.join(' ')}` : 'reset');
-    await this._await(moves.length ? 'ready' : 'ready');
+    await this._await('ready');
     this._send(`go ${seconds}`);
     const line = await this._await('bestmove');
     return line.slice('bestmove '.length).trim();
@@ -112,7 +122,7 @@ function ishtarBestMove(opp, allMoves, gl, timeMode, debugIdx) {
       client.destroy();
       fn(arg);
     };
-    if (debugIdx !== undefined) client.onRawMessage = (m) => console.error(`[ws ${debugIdx}] << ${m}`);
+    if (debugIdx !== undefined) client.onRawMessage = (m) => process.stderr.write(`[ws ${debugIdx}] << ${m}\n`);
     client.onError = (e) => finish(reject, e);
     client.onBestMove = (action) => finish(resolve, gl.toAlgebraic(action));
     client.connect();
@@ -156,8 +166,7 @@ async function playGame(opts, gl, gameIdx, ourIsP1) {
       }
 
       if (!board.isValid(mv)) {
-        // An illegal move = that side forfeits; surfaces protocol/notation bugs.
-        console.error(`game ${gameIdx}: illegal move "${mv}" by ${ourTurn ? 'OUR' : 'OPP'} at ply ${ply}`);
+        process.stderr.write(`game ${gameIdx}: illegal move "${mv}" by ${ourTurn ? 'OUR' : 'OPP'} at ply ${ply}\n`);
         winner = ourTurn ? (ourIsP1 ? 2 : 1) : (ourIsP1 ? 1 : 2);
         break;
       }
@@ -175,13 +184,20 @@ async function playGame(opts, gl, gameIdx, ourIsP1) {
     winner = d1 < d2 ? 1 : d2 < d1 ? 2 : 0;
   }
   const ourWin = winner !== 0 && (winner === 1) === ourIsP1;
-  return { gameIdx, winner, ourWin, draw: winner === 0, plies: moves.length };
+  return { gameIdx, winner, ourWin, draw: winner === 0, plies: moves.length, moves };
 }
 
 async function main() {
   const opts = parseArgs(process.argv);
   const gl = await import('./web/src/lib/gameLogic.js');
-  console.log(
+
+  // When dumping games, route all human-readable output to stderr so stdout
+  // carries only the parseable GAME/RESULT pairs.
+  const log = opts.dumpGames
+    ? (...args) => process.stderr.write(args.join(' ') + '\n')
+    : (...args) => console.log(...args);
+
+  log(
     `match: OUR=${opts.engine} (${opts.ourTime}s) vs ${opts.opp} (${opts.oppTime}), ` +
       `${opts.games} games, concurrency ${opts.concurrency}`,
   );
@@ -199,16 +215,28 @@ async function main() {
       try {
         r = await playGame(opts, gl, idx, ourIsP1);
       } catch (e) {
-        console.error(`game ${idx} error: ${e.message}`);
+        process.stderr.write(`game ${idx} error: ${e.message}\n`);
         continue;
       }
-      if (r.draw) draws++;
-      else if (r.ourWin) ourW++;
-      else oppW++;
+
+      if (r.draw) {
+        draws++;
+      } else if (r.ourWin) {
+        ourW++;
+      } else {
+        oppW++;
+      }
       done++;
+
+      // Emit parseable game record to stdout (skip draws — no winner to label)
+      if (opts.dumpGames && !r.draw) {
+        const result = r.winner === 1 ? 'W' : 'B';
+        process.stdout.write(`GAME ${r.moves.join(' ')}\nRESULT ${result}\n`);
+      }
+
       const score = ourW + 0.5 * draws;
       const secs = ((Date.now() - started) / 1000).toFixed(0);
-      console.log(
+      log(
         `  [${done}/${opts.games}] OUR ${ourW} - ${oppW} ${opts.opp}  (${draws} draws)  ` +
           `score ${score.toFixed(1)}/${done}  ${r.plies} plies  ${secs}s`,
       );
@@ -222,13 +250,15 @@ async function main() {
   const p = score / n;
   const se = Math.sqrt((p * (1 - p)) / n);
   const elo = p > 0 && p < 1 ? -400 * Math.log10((1 - p) / p) : (p >= 1 ? Infinity : -Infinity);
-  console.log('=== ISHTAR MATCH RESULT ===');
-  console.log(`OUR=${opts.engine} vs ${opts.opp} ${opts.oppTime}`);
-  console.log(`OUR ${ourW} | ${opts.opp} ${oppW} | draws ${draws}`);
-  console.log(`score ${score.toFixed(1)}/${n} = ${(p * 100).toFixed(1)}% (±${(se * 196).toFixed(1)}%) → ~${elo >= 0 ? '+' : ''}${elo.toFixed(0)} Elo`);
+  log('=== ISHTAR MATCH RESULT ===');
+  log(`OUR=${opts.engine} vs ${opts.opp} ${opts.oppTime}`);
+  log(`OUR ${ourW} | ${opts.opp} ${oppW} | draws ${draws}`);
+  log(`score ${score.toFixed(1)}/${n} = ${(p * 100).toFixed(1)}% (+-${(se * 196).toFixed(1)}%) ~${elo >= 0 ? '+' : ''}${elo.toFixed(0)} Elo`);
+  // Final summary line on stderr — parseable by run_benchmarks.py
+  process.stderr.write(`MATCH_SUMMARY OUR=${ourW} OPP=${oppW} DRAWS=${draws} SCORE=${score.toFixed(1)}/${n} ELO=${elo.toFixed(0)}\n`);
 }
 
 main().catch((e) => {
-  console.error(e);
+  process.stderr.write(e.stack + '\n');
   process.exit(1);
 });
