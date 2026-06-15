@@ -3,8 +3,8 @@
  * Pondering self-match: engineA vs engineB, each in its own OS process.
  *
  *   node site/self_match.js [options]
- *     --engine-a NAME    engine flag for A (default titanium-v14)
- *     --engine-b NAME    engine flag for B (default ace-v13-pure)
+ *     --engine-a NAME    engine flag for A (default titanium-v15, our current engine)
+ *     --engine-b NAME    engine flag for B (default ace-v13-ti-pure, JS v13 baseline)
  *     --time SEC         think time per move for both (default 2)
  *     --time-a SEC       override think time for A only
  *     --time-b SEC       override think time for B only
@@ -54,8 +54,8 @@ const fs         = require('fs');
 
 function parseArgs(argv) {
   const o = {
-    engineA:    'titanium-v14',
-    engineB:    'ace-v13-pure',
+    engineA:    'titanium-v15',
+    engineB:    'ace-v13-ti-pure',
     timeA:      2,
     timeB:      2,
     ponderTime: null,   // null = same as opponent think time
@@ -68,6 +68,7 @@ function parseArgs(argv) {
     // Pass --no-save-games to disable, or --save-games PATH to use a different file.
     saveGames:  path.resolve(__dirname, '../training/data/self_match_games.games'),
     noPonder:   false,
+    sourceTag:  'self-match',
   };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i], nxt = () => argv[++i];
@@ -84,6 +85,7 @@ function parseArgs(argv) {
     else if (a === '--dump-games')   o.dumpGames  = true;
     else if (a === '--save-games')   o.saveGames  = nxt();
     else if (a === '--no-save-games') o.saveGames = null;
+    else if (a === '--source-tag')   o.sourceTag  = nxt();
     else if (a === '--no-ponder')    o.noPonder   = true;
   }
   if (o.ponderTime === null) o.ponderTime = Math.max(o.timeA, o.timeB);
@@ -268,6 +270,20 @@ async function playGame(opts, gl, gameIdx, aIsP1) {
   };
 }
 
+// ── Incremental training ingest (after each game) ───────────────────────────
+
+function ingestIncremental(gamesFile, sourceTag) {
+  const ingest = path.resolve(__dirname, 'ingest_game.js');
+  const args = [ingest, gamesFile];
+  if (sourceTag) args.push('--tag', sourceTag);
+  return new Promise((resolve) => {
+    const py = spawn('node', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    py.stdout.on('data', d => process.stderr.write(d));
+    py.stderr.on('data', d => process.stderr.write(d));
+    py.on('close', () => resolve());  // never fail the match on ingest errors
+  });
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -319,7 +335,10 @@ async function main() {
       if (!r.draw) {
         const gameLines = `GAME ${r.moves.join(' ')}\nRESULT ${r.winner === 1 ? 'W' : 'B'}\n`;
         if (opts.dumpGames)  process.stdout.write(gameLines);
-        if (saveStream)      saveStream.write(gameLines);
+        if (saveStream) {
+          saveStream.write(gameLines);
+          await ingestIncremental(opts.saveGames, opts.sourceTag);
+        }
       }
 
       const score = aW + 0.5 * draws;
@@ -334,22 +353,9 @@ async function main() {
   await Promise.all(Array.from({ length: Math.max(1, opts.concurrency) }, worker));
   if (saveStream) await new Promise(res => saveStream.end(res));
 
-  // Auto-ingest into training DB immediately after match completes.
+  // Final incremental pass picks up any trailing bytes; no full-file re-ingest.
   if (opts.saveGames) {
-    const dbPath = path.resolve(__dirname, '../training/data/all_games.jsonl');
-    const datagen = path.resolve(__dirname, '../training/datagen.py');
-    log(`ingesting games into training DB: ${dbPath}`);
-    await new Promise((resolve, reject) => {
-      const py = spawn('python', [datagen, '--from-file', opts.saveGames, '--out', dbPath], {
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
-      py.stdout.on('data', d => log(d.toString().trim()));
-      py.stderr.on('data', d => process.stderr.write(d));
-      py.on('close', code => {
-        if (code === 0) resolve();
-        else reject(new Error(`datagen.py exited with code ${code}`));
-      });
-    });
+    log(`training DB: ${path.resolve(__dirname, '../training/data/all_games.jsonl')}`);
   }
 
   const n     = done || 1;

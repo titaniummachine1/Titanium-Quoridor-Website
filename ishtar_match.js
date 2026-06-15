@@ -3,7 +3,7 @@
  * Batch match harness: native Titanium engine vs a remote Ishtar/Ka engine.
  *
  *   node ishtar_match.js [options]
- *     --engine NAME      our engine flag (default titanium-v14)
+ *     --engine NAME      our engine flag (default titanium-v15)
  *     --opp ishtar|ka    remote opponent (default ishtar)
  *     --opp-time MODE    intuition|short|medium|long (default short)
  *     --our-time SEC     our engine think seconds/move (default 2)
@@ -39,7 +39,7 @@ const { QuoridorEngineClient, ENGINES } = require('./extracted/engine_client');
 
 function parseArgs(argv) {
   const o = {
-    engine: 'titanium-v14',
+    engine: 'titanium-v15',
     opp: 'ishtar',
     oppTime: 'short',
     ourTime: 2,
