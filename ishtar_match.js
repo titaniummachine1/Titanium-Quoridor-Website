@@ -204,6 +204,8 @@ class OurEngine {
 // state is NOT auto-advanced — we must send `makemove <Ka_move>` explicitly.
 // uci_engine.py: makemove applies moves sequentially to self.state.
 
+const CONNECT_TIMEOUT_SEC = 30;
+
 class RemoteEngine {
   constructor(opp, timeMode) {
     this.timeMode = timeMode;
@@ -229,10 +231,17 @@ class RemoteEngine {
     this.client = client;
   }
 
-  /** Connect and wait until ready (one-time per game). */
+  /** Connect and wait until ready; rejects after CONNECT_TIMEOUT_SEC if TCP hangs. */
   connect() {
     return new Promise((res, rej) => {
+      let connTimer = setTimeout(() => {
+        this.client.onStatus = null;
+        rej(new Error(`remote connect timeout after ${CONNECT_TIMEOUT_SEC}s`));
+      }, CONNECT_TIMEOUT_SEC * 1000);
+
       const onStatus = (s) => {
+        clearTimeout(connTimer);
+        connTimer = null;
         if (s === 'idle') { this._connected = true; this.client.onStatus = null; res(); }
         else if (s === 'error') { rej(new Error('Remote WS failed')); }
       };
@@ -254,38 +263,53 @@ class RemoteEngine {
     this.client.makeMoves([gl.parseAlgebraic(mv)]);
   }
 
-  /** Ask remote for its move; returns { move, thinkSec }. */
+  /**
+   * Ask remote for its move; returns { move, thinkSec }.
+   * The outer timer covers _ensureConnected() too — a hung TCP reconnect
+   * no longer blocks indefinitely.
+   */
   async bestMove(gl, timeoutSec = 120) {
-    await this._ensureConnected();
-    this._error = null;
-    const t0 = Date.now();
     return new Promise((res, rej) => {
-      let timer = null;
-      const finish = (fn) => {
-        if (timer) clearTimeout(timer);
+      let settled = false;
+      const outerTimer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
         this._pending = null;
-        fn();
-      };
-      this._pending = (result) => {
-        if (!result || result.error) {
-          finish(() => rej(this._error || result?.error || new Error('remote engine returned no bestmove')));
-          return;
-        }
-        const { action } = result;
-        const thinkSec = Math.max(0.1, (Date.now() - t0) / 1000);
-        finish(() => res({ move: gl.toAlgebraic(action), thinkSec }));
-      };
-      timer = setTimeout(() => {
         try { this.client?.abortSearch(); } catch {}
         try { this.client?.destroy(); } catch {}
         this._makeClient();
-        finish(() => rej(new Error(`remote think timeout (${timeoutSec}s)`)));
+        rej(new Error(`remote think timeout (${timeoutSec}s)`));
       }, Math.max(1000, timeoutSec * 1000));
-      try {
-        this.client.go(this.timeMode);
-      } catch (e) {
+
+      const finish = (fn) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(outerTimer);
+        this._pending = null;
+        fn();
+      };
+
+      this._ensureConnected().then(() => {
+        if (settled) return; // timed out during connect
+        this._error = null;
+        const t0 = Date.now();
+        this._pending = (result) => {
+          if (!result || result.error) {
+            finish(() => rej(this._error || result?.error || new Error('remote engine returned no bestmove')));
+            return;
+          }
+          const { action } = result;
+          const thinkSec = Math.max(0.1, (Date.now() - t0) / 1000);
+          finish(() => res({ move: gl.toAlgebraic(action), thinkSec }));
+        };
+        try {
+          this.client.go(this.timeMode);
+        } catch (e) {
+          finish(() => rej(e));
+        }
+      }).catch((e) => {
         finish(() => rej(e));
-      }
+      });
     });
   }
 
