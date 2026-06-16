@@ -158,7 +158,6 @@ async function runOne(p, slot, gl, progress) {
     }
     return await runLocal(p, slot, gl, progress);
   } catch (e) {
-    progress.note(`${shortLabel(p)} error: ${e.message}`);
     progress.idle(slot);
     throw e;
   }
@@ -188,7 +187,8 @@ async function slotLoop(slot, gl, progress, onGameDone) {
       const r = await runOne(pairing, slot, gl, progress);
       if (onGameDone) await onGameDone(r);
     } catch (e) {
-      progress.note(`${shortLabel(pairing)} slot ${slot}: ${e.message}`);
+      const brief = (e.message || String(e)).split('\n')[0];
+      progress.note(`${shortLabel(pairing)}: ${brief}`);
       if (pairing.release_remote) {
         await releaseRemoteSlot(pairing.game_id).catch(() => {});
       }

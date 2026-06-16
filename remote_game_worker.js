@@ -97,8 +97,9 @@ async function main() {
 
 main().catch(async (e) => {
   await releaseRemoteSlot(workerGameId).catch(() => {});
-  const msg = e.stack || e.message || String(e);
-  process.send?.({ type: 'error', error: msg });
-  process.stderr.write(`remote_game_worker FATAL: ${msg}\n`);
+  const shortMsg = e.message || String(e);
+  const fullMsg = e.stack || shortMsg;
+  process.send?.({ type: 'error', error: shortMsg });  // one-liner for parent's progress bar
+  process.stderr.write(`remote_game_worker FATAL: ${fullMsg}\n`);
   process.exit(1);
 });
