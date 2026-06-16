@@ -25,6 +25,7 @@ const ENGINES = {
     name: 'Ka',
     uri: 'wss://quoridor-ai.com/ka',
     notation: Notation.Official,
+    // Alpha strength = full visit table below (no strength setoption on wire).
     visits: { intuition: 1, short: 1000, medium: 5000, long: 20000 },
   },
 };
@@ -194,6 +195,7 @@ class QuoridorEngineClient {
       if (this.ws === ws) {
         this.setStatus('error');
         this.ws = null;
+        this.onError?.(new Error('WebSocket closed'));
       }
     });
   }
@@ -259,6 +261,16 @@ class QuoridorEngineClient {
     }
 
     this.send('stop');
+    this.isPondering = false;
+    this.setStatus('idle');
+  }
+
+  /** Abort an in-flight `go` search (best-effort; server may ignore). */
+  abortSearch() {
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.send('stop');
+    }
+    this.outstandingSearches = 0;
     this.isPondering = false;
     this.setStatus('idle');
   }

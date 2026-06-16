@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 /**
- * Incremental ingest helper — called by self_match.js after each game.
- * Usage: node site/ingest_game.js <games-file> [--tag NAME]
+ * Upsert one game via localhost coordinator.
+ * Usage: node ingest_game.js <games-file> [--tag NAME]
+ *        (reads last GAME/RESULT pair from file tail, or pass via stdin in future)
  */
 'use strict';
-const { spawnSync } = require('child_process');
-const path = require('path');
+
+const fs = require('fs');
+const { upsertGame } = require('./coordinator_client');
 
 const gamesFile = process.argv[2];
 const tagIdx = process.argv.indexOf('--tag');
@@ -16,16 +18,27 @@ if (!gamesFile) {
   process.exit(1);
 }
 
-const datagen = path.resolve(__dirname, '../training/datagen.py');
-const dbPath = path.resolve(__dirname, '../training/data/all_games.jsonl');
-const args = [
-  datagen,
-  '--incremental', gamesFile,
-  '--out', dbPath,
-];
-if (tag) args.push('--tag', tag);
+const text = fs.readFileSync(gamesFile, 'utf8');
+const lines = text.trim().split(/\r?\n/);
+let moves = null;
+let result = null;
+for (let i = lines.length - 1; i >= 0; i--) {
+  const line = lines[i].trim();
+  if (!result && line.startsWith('RESULT ')) {
+    result = line.split(/\s+/)[1];
+  } else if (!moves && line.startsWith('GAME ')) {
+    moves = line.split(/\s+/).slice(1);
+    if (result) break;
+  }
+}
 
-const r = spawnSync('python', args, { encoding: 'utf8' });
-if (r.stdout) process.stderr.write(r.stdout);
-if (r.stderr) process.stderr.write(r.stderr);
-process.exit(r.status ?? 1);
+if (!moves || !result || !['W', 'B'].includes(result)) {
+  process.stderr.write('ingest_game: no GAME/RESULT found in file\n');
+  process.exit(1);
+}
+
+upsertGame({ moves, result, tag, gamesFile })
+  .catch((e) => {
+    process.stderr.write(`ingest_game failed: ${e.message}\n`);
+    process.exit(1);
+  });

@@ -6,8 +6,10 @@
  *     --engine NAME      our engine flag (default titanium-v15)
  *     --opp ishtar|ka    remote opponent (default ishtar)
  *     --opp-time MODE    intuition|short|medium|long (default short)
- *     --our-time SEC     our engine think seconds/move (default 2)
- *     --ponder-time SEC  seconds to ponder during opponent's think (default 10)
+ *     --our-time SEC     fallback/bootstrap seconds if no remote sample yet (default 10)
+ *     --ponder-time SEC  ponder during remote think (default 0 in fair mode)
+ *     --fair-time        our think = max remote peak (calibrated + this game), not last move (default ON)
+ *     --no-fair-time     use fixed --our-time instead
  *     --games N          total games (default 8)
  *     --concurrency K    games in flight at once (default 2)
  *     --bin PATH         titanium binary
@@ -35,27 +37,35 @@
 const { spawn } = require('child_process');
 const readline = require('readline');
 const path = require('path');
+const fs = require('fs');
+const { ProgressBoard, MAX_SLOTS } = require('./progress_bars');
 const { QuoridorEngineClient, ENGINES } = require('./extracted/engine_client');
+const { fairBudgetSec, recordThink, minThinkSec, remoteMoveTimeoutSec } = require('./remote_timing');
+const { normalizeTimeMode, presetDescription } = require('./remote_presets');
 
 function parseArgs(argv) {
   const o = {
     engine: 'titanium-v15',
     opp: 'ishtar',
     oppTime: 'short',
-    ourTime: 2,
-    ponderTime: 10,
+    ourTime: 10,
+    ponderTime: 0,
+    fairTime: true,
     games: 8,
     concurrency: 2,
     bin: path.resolve(__dirname, '../engine/target/release/titanium.exe'),
     maxPly: 300,
     dumpGames: false,
+    saveGames: null,
+    sourceTag: 'ishtar-match',
+    verbose: false,
   };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
     const next = () => argv[++i];
     if (a === '--engine') o.engine = next();
     else if (a === '--opp') o.opp = next();
-    else if (a === '--opp-time') o.oppTime = next();
+    else if (a === '--opp-time') o.oppTime = normalizeTimeMode(next());
     else if (a === '--our-time') o.ourTime = Number(next());
     else if (a === '--ponder-time') o.ponderTime = Number(next());
     else if (a === '--games') o.games = Number(next());
@@ -63,8 +73,61 @@ function parseArgs(argv) {
     else if (a === '--bin') o.bin = next();
     else if (a === '--max-ply') o.maxPly = Number(next());
     else if (a === '--dump-games') o.dumpGames = true;
+    else if (a === '--save-games') o.saveGames = next();
+    else if (a === '--source-tag') o.sourceTag = next();
+    else if (a === '--fair-time') o.fairTime = true;
+    else if (a === '--no-fair-time') o.fairTime = false;
+    else if (a === '--verbose') o.verbose = true;
   }
+  if (o.fairTime && o.ponderTime === 0) o.ponderTime = 0;
   return o;
+}
+
+const coord = require('./coordinator_client');
+
+async function persistGame(moves, result, sourceTag, gamesFile, releaseRemote = false, gameId = null) {
+  await coord.upsertGame({ moves, result, tag: sourceTag, gamesFile, releaseRemote, gameId });
+}
+
+function ourTcLabel(_opts) {
+  return '5s';
+}
+
+async function loadPriorMatchup(engineA, engineB, tcA, tcB) {
+  const j = await coord.lookupMatchup(engineA, engineB, tcA, tcB);
+  return { ourW: j.aW, oppW: j.bW };
+}
+
+function runningElo(ourW, oppW) {
+  const n = ourW + oppW;
+  if (!n) return { elo: null, se: null };
+  const p = ourW / n;
+  if (p <= 0 || p >= 1) return { elo: p >= 1 ? Infinity : -Infinity, se: 0 };
+  return {
+    elo: -400 * Math.log10((1 - p) / p),
+    se: Math.sqrt((p * (1 - p)) / n) * 196,
+  };
+}
+
+async function updateMatchup(opts, ourW, oppW, logFn) {
+  try {
+    const entry = await coord.upsertMatchup({
+      engineA: opts.engine,
+      engineB: opts.opp,
+      aWins: ourW,
+      bWins: oppW,
+      tcA: ourTcLabel(opts),
+      tcB: opts.oppTime,
+      gamesFile: opts.saveGames,
+      source: opts.sourceTag || `${opts.engine}-vs-${opts.opp}-${opts.oppTime}`,
+    });
+    if (entry.elo_a_vs_b != null && logFn) {
+      logFn(`Elo diff (A vs B): ${entry.elo_a_vs_b}`);
+    }
+  } catch (e) {
+    if (logFn) logFn(`matchup upsert failed: ${e.message}`);
+    throw e;
+  }
 }
 
 // ── Our local engine ──────────────────────────────────────────────────────────
@@ -131,7 +194,8 @@ class OurEngine {
 
   destroy() {
     try { this._send('quit'); } catch {}
-    this.proc.kill();
+    try { this.rl?.close(); } catch {}
+    try { this.proc?.kill(); } catch {}
   }
 }
 
@@ -160,7 +224,7 @@ class RemoteEngine {
     client.onError = (e) => {
       this._error = e;
       const cb = this._pending; this._pending = null;
-      if (cb) cb(null);
+      if (cb) cb({ error: e });
     };
     this.client = client;
   }
@@ -178,10 +242,10 @@ class RemoteEngine {
   }
 
   /** Reconnect if the connection dropped (Ka may close after idle time). */
-  _ensureConnected() {
-    if (this.client.ws && this.client.ws.readyState === 1 /* OPEN */) return;
+  async _ensureConnected() {
+    if (this.client?.ws?.readyState === 1 /* OPEN */) return;
     this._makeClient();
-    return this.connect();
+    await this.connect();
   }
 
   /** Tell Ka/Ishtar that `mv` was played (advances server state). */
@@ -190,37 +254,83 @@ class RemoteEngine {
     this.client.makeMoves([gl.parseAlgebraic(mv)]);
   }
 
-  /** Ask Ka/Ishtar for its move (from current server state). Returns algebraic or throws. */
-  bestMove(gl) {
-    return new Promise(async (res, rej) => {
-      await this._ensureConnected();
-      this._error = null;
-      this._pending = ({ action, raw }) => {
-        if (!action) { rej(this._error || new Error('no bestmove')); return; }
-        res(gl.toAlgebraic(action));
+  /** Ask remote for its move; returns { move, thinkSec }. */
+  async bestMove(gl, timeoutSec = 120) {
+    await this._ensureConnected();
+    this._error = null;
+    const t0 = Date.now();
+    return new Promise((res, rej) => {
+      let timer = null;
+      const finish = (fn) => {
+        if (timer) clearTimeout(timer);
+        this._pending = null;
+        fn();
       };
-      this.client.go(this.timeMode);
+      this._pending = (result) => {
+        if (!result || result.error) {
+          finish(() => rej(this._error || result?.error || new Error('remote engine returned no bestmove')));
+          return;
+        }
+        const { action } = result;
+        const thinkSec = Math.max(0.1, (Date.now() - t0) / 1000);
+        finish(() => res({ move: gl.toAlgebraic(action), thinkSec }));
+      };
+      timer = setTimeout(() => {
+        try { this.client?.abortSearch(); } catch {}
+        try { this.client?.destroy(); } catch {}
+        this._makeClient();
+        finish(() => rej(new Error(`remote think timeout (${timeoutSec}s)`)));
+      }, Math.max(1000, timeoutSec * 1000));
+      try {
+        this.client.go(this.timeMode);
+      } catch (e) {
+        finish(() => rej(e));
+      }
     });
   }
 
-  destroy() { if (this.client) this.client.destroy(); }
+  destroy() {
+    this._pending = null;
+    if (this.client) this.client.destroy();
+  }
 }
 
 // ── Game loop ─────────────────────────────────────────────────────────────────
 
-async function playGame(opts, gl, gameIdx, ourIsP1) {
+function vlog(opts, gameIdx, msg) {
+  if (opts.verbose) process.stderr.write(`game ${gameIdx}: ${msg}\n`);
+}
+
+function statusLog(opts, msg) {
+  if (process.env.NO_PROGRESS === '1') {
+    const tag = process.env.MATCH_LABEL || `${opts.engine} vs ${opts.opp}@${opts.oppTime}`;
+    process.stderr.write(`[${tag}] ${msg}\n`);
+  }
+}
+
+async function playGame(opts, gl, gameIdx, ourIsP1, slot, progress) {
   const { QuoridorBoard } = gl;
   const board = new QuoridorBoard();
   const our = new OurEngine(opts.bin, opts.engine);
   const remote = new RemoteEngine(opts.opp, opts.oppTime);
+
+  progress.start(slot, gameIdx, opts.maxPly);
 
   // Connect and init Ka/Ishtar server state (sends newgame equivalent via fresh connect).
   await remote.connect();
 
   const moves = [];
   let winner = 0;
-  let savedPonderMove = null;   // pre-computed our response to predicted Ka move
-  let predictedKaMove = null;   // what we predicted Ka would play
+  let savedPonderMove = null;
+  let predictedKaMove = null;
+  // Fair time: our budget = biggest remote think seen (calibration max + in-game peak).
+  let gameMaxRemoteSec = 0;
+  let ourThinkSec = opts.fairTime
+    ? fairBudgetSec(opts.opp, opts.oppTime, 0)
+    : opts.ourTime;
+  if (opts.fairTime) {
+    vlog(opts, gameIdx, `fair budget ${ourThinkSec.toFixed(1)}s (calibrated max for ${opts.opp}@${opts.oppTime})`);
+  }
 
   try {
     for (let ply = 0; ply < opts.maxPly; ply++) {
@@ -237,9 +347,10 @@ async function playGame(opts, gl, gameIdx, ourIsP1) {
         if (savedPonderMove !== null && moves[moves.length - 1] === predictedKaMove) {
           mv = savedPonderMove;
         } else {
-          const res = await our.bestMove(moves, opts.ourTime);
+          vlog(opts, gameIdx, `our turn — go ${ourThinkSec.toFixed(1)}s`);
+          progress.thinking(slot, 'us', ourThinkSec);
+          const res = await our.bestMove(moves, ourThinkSec);
           mv = res.move;
-          // Save PV for next ponder prediction.
           predictedKaMove = res.pvOpponentReply;
         }
         savedPonderMove = null;
@@ -256,14 +367,29 @@ async function playGame(opts, gl, gameIdx, ourIsP1) {
         let ponderPromise = null;
 
         if (predictedKaMove && opts.ponderTime > 0) {
-          // Predict Ka plays predictedKaMove; ponder our response to that.
           const ponderMoves = [...moves, predictedKaMove];
           ponderEngine = new OurEngine(opts.bin, opts.engine);
           ponderPromise = ponderEngine.bestMove(ponderMoves, opts.ponderTime);
         }
 
-        // Ka searches from its current state (all previous moves already applied).
-        mv = await remote.bestMove(gl);
+        const remoteBudget = opts.fairTime
+          ? fairBudgetSec(opts.opp, opts.oppTime, gameMaxRemoteSec)
+          : opts.ourTime;
+        const remoteTimeout = remoteMoveTimeoutSec(opts.opp, opts.oppTime);
+        progress.thinking(slot, opts.opp, remoteBudget);
+        const remoteRes = await remote.bestMove(gl, remoteTimeout);
+        mv = remoteRes.move;
+        if (remoteRes.thinkSec >= minThinkSec(opts.opp, opts.oppTime)) {
+          gameMaxRemoteSec = Math.max(gameMaxRemoteSec, remoteRes.thinkSec);
+        }
+        recordThink(opts.opp, opts.oppTime, remoteRes.thinkSec);
+        ourThinkSec = opts.fairTime
+          ? fairBudgetSec(opts.opp, opts.oppTime, gameMaxRemoteSec)
+          : opts.ourTime;
+        vlog(opts, gameIdx,
+          `${opts.opp}@${opts.oppTime} thought ${remoteRes.thinkSec.toFixed(1)}s` +
+          ` (game peak ${gameMaxRemoteSec.toFixed(1)}s) → our go ${ourThinkSec.toFixed(1)}s`,
+        );
 
         // Collect ponder result.
         if (ponderPromise) {
@@ -283,12 +409,17 @@ async function playGame(opts, gl, gameIdx, ourIsP1) {
       }
 
       if (!board.isValid(mv)) {
-        process.stderr.write(`game ${gameIdx}: illegal move "${mv}" by ${ourTurn ? 'OUR' : 'OPP'} at ply ${ply}\n`);
+        statusLog(opts, `illegal move "${mv}" by ${ourTurn ? 'OUR' : 'OPP'} at ply ${ply}`);
+        progress.note(`game ${gameIdx}: illegal move "${mv}" by ${ourTurn ? 'OUR' : 'OPP'} at ply ${ply}`);
         winner = ourTurn ? (ourIsP1 ? 2 : 1) : (ourIsP1 ? 1 : 2);
         break;
       }
       board.takeAction(mv);
       moves.push(mv);
+      progress.ply(slot, moves.length, opts.maxPly);
+      if (process.env.NO_PROGRESS === '1' && moves.length % 10 === 0) {
+        statusLog(opts, `ply ${moves.length}/${opts.maxPly}`);
+      }
     }
   } finally {
     our.destroy();
@@ -301,74 +432,123 @@ async function playGame(opts, gl, gameIdx, ourIsP1) {
     winner = d1 < d2 ? 1 : d2 < d1 ? 2 : 0;
   }
   const ourWin = winner !== 0 && (winner === 1) === ourIsP1;
+  progress.finish(slot, {
+    plies: moves.length,
+    label: ourWin ? 'we win' : `${opts.opp} wins`,
+  });
   return { gameIdx, winner, ourWin, draw: winner === 0, plies: moves.length, moves };
 }
-
-// ── Main ──────────────────────────────────────────────────────────────────────
 
 async function main() {
   const opts = parseArgs(process.argv);
   const gl = await import('./web/src/lib/gameLogic.js');
 
+  const progress = new ProgressBoard({
+    slots: Math.min(opts.concurrency, MAX_SLOTS),
+    title: `${opts.engine} vs ${opts.opp}@${opts.oppTime}`,
+  });
   const log = opts.dumpGames
-    ? (...args) => process.stderr.write(args.join(' ') + '\n')
-    : (...args) => console.log(...args);
+    ? (...args) => progress.note(args.join(' '))
+    : (...args) => progress.note(args.join(' '));
 
   log(
-    `match: OUR=${opts.engine} (${opts.ourTime}s, ponder ${opts.ponderTime}s) vs ${opts.opp} (${opts.oppTime}), ` +
-      `${opts.games} games, concurrency ${opts.concurrency}`,
+    `match: OUR=${opts.engine} vs ${opts.opp}@${opts.oppTime}` +
+    (opts.fairTime
+      ? `  [matched think time vs remote peak]`
+      : `  OUR=${opts.ourTime}s fixed`) +
+    `  ${opts.games} games, concurrency ${opts.concurrency}`,
   );
+  statusLog(opts, 'starting');
+  log('Elo ladder: training/data/STATUS.txt');
 
-  let ourW = 0, oppW = 0, draws = 0, done = 0;
+  if (opts.saveGames) log(`saving games -> ${opts.saveGames}`);
+
+  const prior = await loadPriorMatchup(opts.engine, opts.opp, ourTcLabel(opts), opts.oppTime);
+  let ourW = prior.ourW, oppW = prior.oppW;
+  let sessionOur = 0, sessionOpp = 0;
+  let done = 0;
   const started = Date.now();
   let next = 0;
 
-  async function worker() {
+  async function worker(workerId) {
+    const slot = workerId;
     for (;;) {
       const idx = next++;
-      if (idx >= opts.games) return;
+      if (idx >= opts.games) {
+        progress.idle(slot);
+        return;
+      }
       const ourIsP1 = idx % 2 === 0;
       let r;
       try {
-        r = await playGame(opts, gl, idx, ourIsP1);
+        r = await playGame(opts, gl, idx, ourIsP1, slot, progress);
       } catch (e) {
-        process.stderr.write(`game ${idx} error: ${e.message}\n`);
+        progress.note(`game ${idx} error: ${e.message}`);
+        progress.idle(slot);
         continue;
       }
 
-      if (r.draw) draws++;
-      else if (r.ourWin) ourW++;
-      else oppW++;
+      if (r.draw) continue;
+      if (r.ourWin) { ourW++; sessionOur++; }
+      else { oppW++; sessionOpp++; }
       done++;
 
-      if (opts.dumpGames && !r.draw) {
+      if (opts.dumpGames) {
         process.stdout.write(`GAME ${r.moves.join(' ')}\nRESULT ${r.winner === 1 ? 'W' : 'B'}\n`);
       }
+      if (opts.saveGames || opts.sourceTag) {
+        await persistGame(
+          r.moves,
+          r.winner === 1 ? 'W' : 'B',
+          opts.sourceTag,
+          opts.saveGames,
+        );
+      }
+      await updateMatchup(opts, ourW, oppW, (msg) => log(msg));
 
-      const score = ourW + 0.5 * draws;
+      const { elo, se } = runningElo(ourW, oppW);
       const secs = ((Date.now() - started) / 1000).toFixed(0);
+      const eloS = elo != null && Number.isFinite(elo)
+        ? `  ~${elo >= 0 ? '+' : ''}${elo.toFixed(0)} diff (±${se.toFixed(0)}%)`
+        : '';
       log(
-        `  [${done}/${opts.games}] OUR ${ourW} - ${oppW} ${opts.opp}  (${draws} draws)  ` +
-          `score ${score.toFixed(1)}/${done}  ${r.plies} plies  ${secs}s`,
+        `  [${done} this run, ${ourW + oppW} total] OUR ${ourW} - ${oppW} ${opts.opp}@${opts.oppTime}` +
+        `  (session ${sessionOur}-${sessionOpp})${eloS}  ${r.plies} plies  ${secs}s`,
       );
     }
   }
 
-  await Promise.all(Array.from({ length: Math.max(1, opts.concurrency) }, worker));
+  await Promise.all(Array.from({ length: Math.max(1, opts.concurrency) }, (_, i) => worker(i)));
+  progress.dispose();
 
-  const n = done || 1;
-  const score = ourW + 0.5 * draws;
-  const p = score / n;
+  const n = ourW + oppW || 1;
+  const p = ourW / n;
   const se = Math.sqrt((p * (1 - p)) / n);
   const elo = p > 0 && p < 1 ? -400 * Math.log10((1 - p) / p) : (p >= 1 ? Infinity : -Infinity);
   log('=== MATCH RESULT ===');
-  log(`OUR=${opts.engine} vs ${opts.opp} ${opts.oppTime}`);
-  log(`OUR ${ourW} | OPP ${oppW} | draws ${draws}`);
-  log(`score ${score.toFixed(1)}/${n} = ${(p * 100).toFixed(1)}% (+-${(se * 196).toFixed(1)}%) ~${elo >= 0 ? '+' : ''}${elo.toFixed(0)} Elo`);
-  process.stderr.write(`MATCH_SUMMARY OUR=${ourW} OPP=${oppW} DRAWS=${draws} SCORE=${score.toFixed(1)}/${n} ELO=${elo.toFixed(0)}\n`);
+  log(`OUR=${opts.engine}@5s vs ${presetDescription(opts.opp, opts.oppTime)}`);
+  log(`This run: OUR ${sessionOur} | OPP ${sessionOpp}`);
+  log(`Cumulative: OUR ${ourW} | OPP ${oppW}  (${n} games)`);
+  log(`score ${ourW}/${n} = ${(p * 100).toFixed(1)}% (+-${(se * 196).toFixed(1)}%) ~${elo >= 0 ? '+' : ''}${elo.toFixed(0)} Elo diff`);
+  log('Updated: training/data/STATUS.txt (global ladder)');
+  process.stderr.write(
+    `MATCH_SUMMARY OUR=${ourW} OPP=${oppW} DRAWS=0 SCORE=${ourW}/${n} ELO=${Number.isFinite(elo) ? elo.toFixed(0) : elo}\n`,
+  );
 }
 
-main().catch((e) => {
-  process.stderr.write(e.stack + '\n');
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((e) => {
+    const tag = process.env.MATCH_LABEL || 'match';
+    process.stderr.write(`[${tag}] FATAL: ${e.stack || e}\n`);
+    process.exit(1);
+  });
+}
+
+module.exports = {
+  playGame,
+  persistGame,
+  loadPriorMatchup,
+  updateMatchup,
+  ourTcLabel,
+  runningElo,
+};
