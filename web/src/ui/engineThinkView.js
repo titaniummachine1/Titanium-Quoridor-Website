@@ -160,11 +160,11 @@ function lastThinkForSeat(state, seatIndex) {
 /** Last finished think for this seat — kept visible while the opponent searches. */
 function resolveCompletedThink(state, seatIndex) {
   const frozen = state.lastCompletedThinkBySeat?.[seatIndex];
-  if (frozen && (frozen.move || frozen.depthLog?.length > 0 || frozen.score != null)) {
+  if (frozen && (frozen.move || frozen.depthLog?.length > 0 || frozen.score != null || frozen.thinkMs != null)) {
     return frozen;
   }
   const snap = state.lastThinkBySeat?.[seatIndex];
-  if (snap && !snap.live && (snap.move || snap.depthLog?.length > 0 || snap.score != null)) {
+  if (snap && !snap.live && (snap.move || snap.depthLog?.length > 0 || snap.score != null || snap.thinkMs != null)) {
     return snap;
   }
   const entry = lastThinkForSeat(state, seatIndex);
@@ -191,6 +191,7 @@ function resolveCompletedThink(state, seatIndex) {
     rolloutVerdict: entry.rolloutVerdict,
     rolloutVisits: entry.rolloutVisits,
     rolloutWins: entry.rolloutWins,
+    thinkMs: entry.thinkMs ?? null,
   };
 }
 
@@ -223,6 +224,7 @@ function payloadFromSnapshot(snap) {
     rolloutVerdict: snap.rolloutVerdict,
     rolloutVisits: snap.rolloutVisits,
     rolloutWins: snap.rolloutWins,
+    thinkMs: snap.thinkMs ?? null,
   };
 }
 
@@ -248,6 +250,7 @@ function payloadFromLiveSearch(ls, ply) {
     rolloutVerdict: ls.rolloutVerdict,
     rolloutVisits: ls.rolloutVisits,
     rolloutWins: ls.rolloutWins,
+    elapsedMs: ls.elapsedMs ?? null,
   };
 }
 
@@ -336,6 +339,17 @@ function heroMetric(payload) {
       ? ` · d${payload.depth ?? payload.searchDepth}`
       : '';
 
+  if (payload.live && payload.elapsedMs != null && !payload.depth && payload.nodes <= 0) {
+    return {
+      left: '…',
+      right: formatThinkDuration(payload.elapsedMs),
+      rightLabel: 'elapsed',
+      tone: 'even',
+      mode: 'searching',
+      depthSuffix: '',
+    };
+  }
+
   if (prefersWinRate(payload)) {
     const pct = Number(payload.rootWinRate) * 100;
     if (!Number.isFinite(pct)) {
@@ -360,6 +374,17 @@ function heroMetric(payload) {
       rightLabel: right.label,
       tone: mate ? (n > 0 ? 'good' : 'bad') : n > 50 ? 'good' : n < -50 ? 'bad' : 'even',
       mode: mate ? 'mate' : 'eval',
+      depthSuffix: depthLabel,
+    };
+  }
+
+  if (!payload.live && payload.thinkMs != null && payload.move) {
+    return {
+      left: payload.move,
+      right: formatThinkDuration(payload.thinkMs),
+      rightLabel: 'think time',
+      tone: 'even',
+      mode: 'eval',
       depthSuffix: depthLabel,
     };
   }
@@ -394,6 +419,17 @@ function formatNodes(nodes, stoppedBy, payload = {}) {
   return `${Number(nodes).toLocaleString()} ${label}`;
 }
 
+function formatThinkDuration(ms) {
+  if (ms == null || !Number.isFinite(Number(ms))) {
+    return '';
+  }
+  const n = Number(ms);
+  if (n < 1000) {
+    return `${Math.round(n)}ms`;
+  }
+  return `${(n / 1000).toFixed(1)}s`;
+}
+
 function formatBudgetLine(payload) {
   const parts = [];
   const total = resolveTotalNodes(payload);
@@ -404,6 +440,10 @@ function formatBudgetLine(payload) {
   const depth = payload.depth ?? payload.searchDepth;
   if (depth && !usesRollouts(payload)) {
     parts.push(`d${depth}`);
+  }
+  const elapsed = formatThinkDuration(payload.thinkMs ?? payload.elapsedMs);
+  if (elapsed) {
+    parts.push(elapsed);
   }
   if (payload.rolloutVerdict) {
     const visits =

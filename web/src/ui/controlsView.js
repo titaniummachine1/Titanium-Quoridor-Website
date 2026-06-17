@@ -138,7 +138,11 @@ function updateSidebarStatusLines(container, state) {
       const depth = deep?.depth ?? state.liveSearch.searchDepth;
       const score = deep?.score ?? state.liveSearch.rootScore;
       const nodes = state.liveSearch.nodes;
+      const elapsed = state.liveSearch.elapsedMs;
       const parts = ['Thinking…'];
+      if (elapsed != null && Number.isFinite(Number(elapsed))) {
+        parts.push(elapsed < 1000 ? `${Math.round(elapsed)}ms` : `${(elapsed / 1000).toFixed(1)}s`);
+      }
       if (depth) {
         parts.push(`d${depth}`);
       }
