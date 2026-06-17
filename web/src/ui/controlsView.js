@@ -1,7 +1,6 @@
 import { playerColorName } from '../lib/playerColors.js';
 import { encodeReplayFromActions } from '../lib/replayCode.js';
 import { updateEngineThinkCards } from './engineThinkView.js';
-import { renderLmrDispersionPanelHtml } from './lmrDispersionView.js';
 
 export { updateEngineThinkCards };
 import './scrapedSlider.css';
@@ -11,8 +10,8 @@ export function renderSiteHeader(container, state, controller) {
   const { settings, aiThinking, uiMode } = state;
   const isReplay = uiMode === 'replay';
   const isPlay = uiMode === 'play';
-  const catStatus = renderCatStatusLine(state);
-  const lmrStatus = renderLmrStatusLine(state);
+  const undoLabel = controller.isHumanVsAiPlay?.() ? 'Take back' : 'Undo';
+  const canUndo = !isReplay && state.actions.length > 0;
 
   container.innerHTML = `
     <div class="site-header__inner">
@@ -26,11 +25,11 @@ export function renderSiteHeader(container, state, controller) {
         ${isPlay ? `
           <div class="button-row button-row--header">
             <button class="btn btn--primary" data-action="new-game">New Game</button>
-            <button class="btn" data-action="undo" ${aiThinking ? 'disabled' : ''}>Undo</button>
+            <button class="btn" data-action="undo" ${canUndo ? '' : 'disabled'}>${undoLabel}</button>
             <button class="btn" data-action="redo" ${aiThinking || !state.canRedo ? 'disabled' : ''}>Redo</button>
           </div>` : ''}
       </div>
-      ${!isReplay ? renderBoardToggles(settings, catStatus, lmrStatus) : ''}
+      ${!isReplay ? renderBoardToggles(settings) : ''}
     </div>`;
 
   wireHeaderControls(container, controller);
@@ -45,8 +44,61 @@ export function syncSiteHeaderOffset(headerEl) {
 
 /** Right column: status, engine info cards, mode panels. */
 export function renderSidebar(container, state, controller) {
-  const { aiThinking, uiMode, replay } = state;
-  const engineErrorLines = (state.settings?.players ?? [])
+  const engineErrorLines = formatEngineErrorLines(state);
+  const isReplay = state.uiMode === 'replay';
+  const isAnalysis = state.uiMode === 'analysis';
+  const isPlay = state.uiMode === 'play';
+
+  container.innerHTML = `
+    <section class="sidebar-card">
+      ${isReplay ? renderReplayPanel(state.replay) : ''}
+      ${isAnalysis ? renderAnalysisPanel(state) : ''}
+
+      <div class="sidebar-panel ${isPlay || isAnalysis ? '' : 'sidebar-panel--hidden'}">
+        <div class="status-panel status-panel--sidebar">
+          <div class="status-line">
+            <span>Turn</span>
+            <strong data-status="turn">${formatTurnLabel(state)}</strong>
+          </div>
+          <div class="status-line">
+            <span>Dist (W−B)</span>
+            <strong data-status="dist">${formatDistanceEval(state.eval)}</strong>
+          </div>
+          <div class="status-line status-line--search-info" data-status="search-info-row" hidden>
+            <span>Search</span>
+            <strong data-status="search-info"></strong>
+          </div>
+          ${engineErrorLines ? `<div class="status-line status-line--error" data-status="error-row"><span>Error</span><strong data-status="error">${escapeHtml(engineErrorLines)}</strong></div>` : '<div class="status-line status-line--error" data-status="error-row" hidden><span>Error</span><strong data-status="error"></strong></div>'}
+        </div>
+        <div class="engine-think-cards-host" data-think-cards-host></div>
+      </div>
+    </section>
+  `;
+
+  updateSidebarPanel(container, state, controller);
+
+  wireReplayPanel(container, controller);
+  wireAnalysisPanel(container, controller);
+}
+
+/** Incremental sidebar refresh — keeps think-card DOM alive during live search. */
+export function updateSidebarPanel(container, state, controller) {
+  updateSidebarStatusLines(container, state);
+  updateEngineThinkCards(container, state);
+}
+
+function formatTurnLabel(state) {
+  if (state.isDraw) {
+    return 'Over (draw)';
+  }
+  if (state.winner) {
+    return `Over (${playerColorName(state.winner)})`;
+  }
+  return playerColorName(state.playerToMove);
+}
+
+function formatEngineErrorLines(state) {
+  return (state.settings?.players ?? [])
     .map((playerType, seat) => {
       const message = state.engineErrors?.[seat];
       if (!message) {
@@ -57,37 +109,60 @@ export function renderSidebar(container, state, controller) {
     })
     .filter(Boolean)
     .join(' | ');
-  const isReplay = uiMode === 'replay';
-  const isAnalysis = uiMode === 'analysis';
-  const isPlay = uiMode === 'play';
+}
 
-  container.innerHTML = `
-    <section class="sidebar-card">
-      ${isReplay ? renderReplayPanel(replay) : ''}
-      ${isAnalysis ? renderAnalysisPanel(state) : ''}
-      ${!isReplay ? `<div data-lmr-dispersion-root>${renderLmrDispersionPanelHtml(state)}</div>` : ''}
+function updateSidebarStatusLines(container, state) {
+  const panel = container.querySelector('.status-panel--sidebar');
+  if (!panel) {
+    return;
+  }
+  const turn = panel.querySelector('[data-status="turn"]');
+  if (turn) {
+    turn.textContent = formatTurnLabel(state);
+  }
+  const dist = panel.querySelector('[data-status="dist"]');
+  if (dist) {
+    dist.textContent = formatDistanceEval(state.eval);
+  }
 
-      <div class="sidebar-panel ${isPlay || isAnalysis ? '' : 'sidebar-panel--hidden'}">
-        <div class="status-panel status-panel--sidebar">
-          <div class="status-line">
-            <span>Turn</span>
-            <strong>${state.isDraw ? 'Over (draw)' : state.winner ? `Over (${playerColorName(state.winner)})` : playerColorName(state.playerToMove)}</strong>
-          </div>
-          <div class="status-line">
-            <span>Dist (W−B)</span>
-            <strong>${formatDistanceEval(state.eval)}</strong>
-          </div>
-          ${engineErrorLines ? `<div class="status-line status-line--error"><span>Error</span><strong>${escapeHtml(engineErrorLines)}</strong></div>` : ''}
-        </div>
-        <div class="engine-think-cards-host" data-think-cards-host></div>
-      </div>
-    </section>
-  `;
+  const searchRow = panel.querySelector('[data-status="search-info-row"]');
+  const searchInfo = panel.querySelector('[data-status="search-info"]');
+  const searchLine = state.searchInfoLine?.trim();
+  if (searchRow && searchInfo) {
+    const show = Boolean(searchLine) || state.aiThinking;
+    searchRow.hidden = !show;
+    if (state.aiThinking && state.liveSearch) {
+      const deep = state.liveSearch.depthLog?.length
+        ? state.liveSearch.depthLog.reduce((best, e) => (e.depth > (best?.depth ?? 0) ? e : best))
+        : null;
+      const depth = deep?.depth ?? state.liveSearch.searchDepth;
+      const score = deep?.score ?? state.liveSearch.rootScore;
+      const nodes = state.liveSearch.nodes;
+      const parts = ['Thinking…'];
+      if (depth) {
+        parts.push(`d${depth}`);
+      }
+      if (score != null && Number.isFinite(Number(score))) {
+        parts.push(String(score));
+      }
+      if (nodes > 0) {
+        parts.push(`${Number(nodes).toLocaleString()}n`);
+      }
+      searchInfo.textContent = parts.join(' · ');
+    } else if (searchLine) {
+      searchInfo.textContent = searchLine;
+    } else {
+      searchInfo.textContent = '';
+    }
+  }
 
-  updateEngineThinkCards(container, state);
-
-  wireReplayPanel(container, controller);
-  wireAnalysisPanel(container, controller);
+  const errorRow = panel.querySelector('[data-status="error-row"]');
+  const errorEl = panel.querySelector('[data-status="error"]');
+  const errorLines = formatEngineErrorLines(state);
+  if (errorRow && errorEl) {
+    errorRow.hidden = !errorLines;
+    errorEl.textContent = errorLines;
+  }
 }
 
 /** @deprecated use renderSiteHeader + renderSidebar */
@@ -124,86 +199,18 @@ function wireHeaderControls(container, controller) {
   container.querySelector('[data-toggle="eval"]')?.addEventListener('change', () => {
     controller.toggleDisplayEvalBar();
   });
-  container.querySelector('[data-toggle="cat-vision"]')?.addEventListener('change', (event) => {
-    controller.toggleCatVision(event.target.checked);
-  });
-  container.querySelector('[data-toggle="lmr-vision"]')?.addEventListener('change', (event) => {
-    controller.toggleLmrVision(event.target.checked);
-  });
-  container.querySelector('[data-toggle="lmr-shallow"]')?.addEventListener('change', (event) => {
-    controller.toggleLmrShallow(event.target.checked);
-  });
 }
 
-function renderCatStatusLine(state) {
-  if (!state.settings.showCatVision) {
-    return '';
-  }
-  if (state.catVizLoading) {
-    return 'Loading…';
-  }
-  if (state.catVizError) {
-    return `Error`;
-  }
-  const cat = state.catViz;
-  if (!cat) {
-    return '';
-  }
-  return `W${cat.whiteDist} B${cat.blackDist}`;
-}
-
-export function renderLmrStatusLine(state) {
-  if (!state.settings.showLmrVision) {
-    return '';
-  }
-  if (state.lmrVizLoading) {
-    return 'Loading…';
-  }
-  if (state.lmrVizError) {
-    const msg = String(state.lmrVizError);
-    return msg.length > 28 ? `${msg.slice(0, 26)}…` : msg;
-  }
-  const viz = state.lmrViz;
-  if (!viz) {
-    return '';
-  }
-  if (state.settings.lmrVisionShallow) {
-    const n = viz.visibleCount ?? viz.moveIndex?.size ?? 0;
-    const depth = viz.searchDepth ?? viz.idDepth ?? '?';
-    return n
-      ? `plan d${depth} · ${n} shown`
-      : `plan d${depth}`;
-  }
-  const searched = viz.searchedCount ?? viz.moves?.filter((m) => m.searched).length ?? 0;
-  const total = viz.moves?.length ?? 0;
-  const depth = viz.searchDepth ?? '?';
-  return total ? `search d${depth} · ${searched}/${total}` : `search d${depth}`;
-}
-
-/** Patch LMR status text during live search without re-rendering the header. */
-export function updateLmrToggleStatus(container, state) {
-  const el = container.querySelector('.toggle-group__lmr-status');
-  if (!el) {
-    return;
-  }
-  const line = renderLmrStatusLine(state);
-  el.textContent = line;
-}
-
-export { updateLmrDispersionPanel } from './lmrDispersionView.js';
-
-function renderBoardToggles(settings, catStatus, lmrStatus) {
-  const catNote = catStatus ? `<span class="toggle-group__cat-status">${escapeHtml(catStatus)}</span>` : '';
-  const lmrNote = lmrStatus ? `<span class="toggle-group__lmr-status">${escapeHtml(lmrStatus)}</span>` : '';
+function renderBoardToggles(settings) {
   return `
     <div class="toggle-group toggle-group--board toggle-group--header">
       <label class="toggle"><input type="checkbox" data-toggle="rotate" ${settings.rotateBoard ? 'checked' : ''} /> Rotate</label>
       <label class="toggle"><input type="checkbox" data-toggle="coordinates" ${settings.displayCoordinates ? 'checked' : ''} /> Coords</label>
       <label class="toggle"><input type="checkbox" data-toggle="walls" ${settings.displayRemainingWalls ? 'checked' : ''} /> Walls</label>
       <label class="toggle"><input type="checkbox" data-toggle="eval" ${settings.displayEvalBar ? 'checked' : ''} /> Eval</label>
-      <label class="toggle toggle--cat"><input type="checkbox" data-toggle="cat-vision" ${settings.showCatVision ? 'checked' : ''} /> CAT ${catNote}</label>
-      <label class="toggle toggle--lmr"><input type="checkbox" data-toggle="lmr-vision" ${settings.showLmrVision ? 'checked' : ''} /> LMR ${lmrNote}</label>
-      <label class="toggle toggle--lmr-shallow ${settings.showLmrVision ? '' : 'toggle--hidden'}"><input type="checkbox" data-toggle="lmr-shallow" ${settings.lmrVisionShallow ? 'checked' : ''} ${settings.showLmrVision ? '' : 'disabled'} /> Shallow</label>
+      <label class="toggle toggle--future" title="Future: NN search-pressure head overlay (not wired yet)">
+        <input type="checkbox" disabled /> Pressure vision (future)
+      </label>
     </div>`;
 }
 
@@ -220,7 +227,7 @@ function renderAnalysisPanel(state) {
         <button type="button" class="btn" data-action="analysis-redo" ${state.aiThinking || !state.canRedo ? 'disabled' : ''}>Redo</button>
         <button type="button" class="btn" data-action="analysis-start">Start</button>
       </div>
-      <p class="time-hint">Move either side on the board — human vs human. Undo/redo walks the move tree. Load any <code>tq1</code> line to debug a position. Toggle <strong>CAT vision</strong> to overlay heat on the board.</p>
+      <p class="time-hint">Move either side on the board — human vs human. Undo/redo walks the move tree. Load any <code>tq1</code> line to debug a position.</p>
     </div>`;
 }
 

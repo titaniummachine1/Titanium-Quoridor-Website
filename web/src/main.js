@@ -1,13 +1,10 @@
 import { AppController } from './game/appController.js';
 import { renderBoard } from './ui/boardView.js';
-import { renderCatHint } from './ui/catHint.js';
-import { renderLmrHint } from './ui/lmrHint.js';
 import {
   renderSiteHeader,
   renderSidebar,
+  updateSidebarPanel,
   updateEngineThinkCards,
-  updateLmrDispersionPanel,
-  updateLmrToggleStatus,
 } from './ui/controlsView.js';
 import { renderEvalBar } from './ui/evalBar.js';
 import { renderGameFooter } from './ui/gameFooter.js';
@@ -46,31 +43,62 @@ const playersRoot = document.getElementById('players-root');
 const evalRoot = document.getElementById('eval-root');
 const footerRoot = document.getElementById('game-footer');
 
+let lastPlayersPanelKey = '';
+let lastSidebarStructureKey = '';
+
+function playersPanelKey(state) {
+  const { settings } = state;
+  return JSON.stringify({
+    mode: settings.uiMode,
+    players: settings.players,
+    ai: settings.playerAiSettings,
+  });
+}
+
+function sidebarStructureKey(state) {
+  const errors = (state.engineErrors ?? [])
+    .map((message, seat) => (message ? `${seat}:${message}` : ''))
+    .filter(Boolean)
+    .join('|');
+  return JSON.stringify({
+    mode: state.uiMode,
+    hasReplay: Boolean(state.replay),
+    winner: state.winner,
+    isDraw: state.isDraw,
+    errors,
+  });
+}
+
 function renderBoardArea() {
   const state = controller.getState();
   renderEvalBar(evalRoot, state);
   renderBoard(boardSlot, state, controller);
   renderGameFooter(footerRoot, state);
-  renderCatHint(boardRoot, state, controller);
-  renderLmrHint(boardRoot, state, controller);
 }
 
 function render() {
   const state = controller.getState();
   renderBoardArea();
   renderSiteHeader(headerRoot, state, controller);
-  renderPlayersPanel(playersRoot, state, controller);
-  renderSidebar(sidebarRoot, state, controller);
+
+  const panelKey = playersPanelKey(state);
+  if (panelKey !== lastPlayersPanelKey) {
+    renderPlayersPanel(playersRoot, state, controller);
+    lastPlayersPanelKey = panelKey;
+  }
+
+  const sbKey = sidebarStructureKey(state);
+  if (sbKey !== lastSidebarStructureKey) {
+    renderSidebar(sidebarRoot, state, controller);
+    lastSidebarStructureKey = sbKey;
+  } else {
+    updateSidebarPanel(sidebarRoot, state, controller);
+  }
 }
 
 function renderLiveSearch() {
   const state = controller.getState();
-  updateEngineThinkCards(sidebarRoot, state);
-  if (state.settings.showLmrVision) {
-    renderBoardArea();
-    updateLmrToggleStatus(headerRoot, state);
-    updateLmrDispersionPanel(sidebarRoot, state);
-  }
+  updateSidebarPanel(sidebarRoot, state, controller);
 }
 
 controller.onChange = render;

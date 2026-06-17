@@ -63,6 +63,8 @@ function rolloutCount(payload) {
 
 const STOP_LABELS = {
   searching: 'searching',
+  cancelled: 'cancelled',
+  idle: 'idle',
   minimax: 'αβ',
   mcts: 'MCTS',
   time: 'time',

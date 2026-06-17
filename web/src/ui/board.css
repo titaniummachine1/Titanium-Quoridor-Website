@@ -4,6 +4,14 @@
   position: relative;
   aspect-ratio: 1;
   width: 100%;
+  max-width: min(640px, 100%);
+  margin-inline: auto;
+  touch-action: manipulation;
+}
+
+.board--dragging {
+  touch-action: none;
+  user-select: none;
 }
 
 .board {
@@ -488,6 +496,17 @@
 
 .board-cell__square--valid {
   cursor: pointer;
+}
+
+.board-cell__square--drag-preview {
+  outline: 3px solid rgba(255, 220, 120, 0.95);
+  outline-offset: -3px;
+  filter: brightness(1.08);
+}
+
+.board-cell__wall--drag-preview {
+  opacity: 0.85 !important;
+  box-shadow: 0 0 0 3px rgba(255, 220, 120, 0.95);
 }
 
 .board-cell__pawn {

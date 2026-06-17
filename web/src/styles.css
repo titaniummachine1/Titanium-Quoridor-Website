@@ -22,8 +22,10 @@
 body {
   margin: 0;
   min-height: 100vh;
+  min-height: 100dvh;
   background: var(--bg);
   color: var(--text);
+  overflow-x: clip;
 }
 
 .app-shell {
@@ -113,9 +115,12 @@ body {
 .layout__board {
   grid-area: board;
   width: 100%;
+  min-width: 0;
   max-width: 640px;
   justify-self: center;
   position: relative;
+  align-self: start;
+  contain: layout style;
 }
 
 .layout__sidebar {
@@ -736,8 +741,13 @@ body {
   margin-left: 4px;
 }
 
-.toggle--cat {
-  flex-wrap: wrap;
+.toggle--future {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.toggle--future input {
+  cursor: not-allowed;
 }
 
 @media (max-width: 1100px) {
@@ -762,6 +772,18 @@ body {
       'players'
       'sidebar';
     grid-template-columns: 1fr;
+    padding-top: calc(var(--site-header-h, 76px) + 4px);
+  }
+
+  .layout__board {
+    max-width: min(100vw - 20px, 480px);
+    width: 100%;
+  }
+
+  .site-header__row--title .button-row--header {
+    max-width: none;
+    width: 100%;
+    margin-left: 0;
   }
 
   .board-row {

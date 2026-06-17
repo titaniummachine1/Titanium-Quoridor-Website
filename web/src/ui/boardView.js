@@ -153,30 +153,111 @@ export function renderBoard(container, state, controller) {
     container.appendChild(banner);
   }
 
-  boardShell.addEventListener('click', (event) => {
-    const actionNode = event.target.closest?.('[data-action]');
-    if (!actionNode) {
-      return;
-    }
-    if (actionNode.dataset.isValid !== 'true') {
-      return;
-    }
+  wireBoardPointerInput(boardShell, { canInteract, controller });
+}
 
+function wireBoardPointerInput(boardShell, { canInteract, controller }) {
+  if (!canInteract) {
+    return;
+  }
+
+  let activePointerId = null;
+  let previewEl = null;
+
+  const clearPreview = () => {
+    previewEl?.classList.remove(
+      'board-cell__square--drag-preview',
+      'board-cell__wall--drag-preview',
+    );
+    previewEl = null;
+  };
+
+  const actionNodeFromTarget = (target) => target?.closest?.('[data-action]') ?? null;
+
+  const setPreview = (actionNode) => {
+    clearPreview();
+    if (!actionNode || actionNode.dataset.isValid !== 'true') {
+      return;
+    }
+    previewEl =
+      actionNode.querySelector('.board-cell__square, .board-cell__wall') ?? actionNode;
+    previewEl.classList.add(
+      previewEl.classList.contains('board-cell__wall')
+        ? 'board-cell__wall--drag-preview'
+        : 'board-cell__square--drag-preview',
+    );
+  };
+
+  const submitAction = (actionNode) => {
+    if (!actionNode || actionNode.dataset.isValid !== 'true') {
+      return;
+    }
     const actionKey = actionNode.dataset.action;
     if (!actionKey) {
       return;
     }
-
     if (actionKey.length === 2) {
       controller.tryAction({ coordinate: parseCoord(actionKey) });
       return;
     }
-
     const wallType = actionKey[2] === 'h' ? WallType.Horizontal : WallType.Vertical;
     controller.tryAction({
       coordinate: parseCoord(actionKey.slice(0, 2)),
       wallType,
     });
+  };
+
+  boardShell.addEventListener('pointerdown', (event) => {
+    const actionNode = actionNodeFromTarget(event.target);
+    if (!actionNode || actionNode.dataset.isValid !== 'true') {
+      return;
+    }
+    activePointerId = event.pointerId;
+    boardShell.classList.add('board--dragging');
+    boardShell.setPointerCapture(activePointerId);
+    setPreview(actionNode);
+    event.preventDefault();
+  });
+
+  boardShell.addEventListener('pointermove', (event) => {
+    if (activePointerId == null || event.pointerId !== activePointerId) {
+      return;
+    }
+    const under = document.elementFromPoint(event.clientX, event.clientY);
+    setPreview(actionNodeFromTarget(under));
+    event.preventDefault();
+  });
+
+  const finishDrag = (event) => {
+    if (activePointerId == null || event.pointerId !== activePointerId) {
+      return;
+    }
+    try {
+      boardShell.releasePointerCapture(activePointerId);
+    } catch {
+      /* already released */
+    }
+    boardShell.classList.remove('board--dragging');
+    const under = document.elementFromPoint(event.clientX, event.clientY);
+    const actionNode = actionNodeFromTarget(under);
+    clearPreview();
+    activePointerId = null;
+    submitAction(actionNode);
+  };
+
+  boardShell.addEventListener('pointerup', finishDrag);
+  boardShell.addEventListener('pointercancel', (event) => {
+    if (activePointerId == null || event.pointerId !== activePointerId) {
+      return;
+    }
+    try {
+      boardShell.releasePointerCapture(activePointerId);
+    } catch {
+      /* already released */
+    }
+    boardShell.classList.remove('board--dragging');
+    clearPreview();
+    activePointerId = null;
   });
 }
 

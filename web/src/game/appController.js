@@ -158,6 +158,10 @@ import {
 } from '../lib/timeControl.js';
 import { playerColorName } from '../lib/playerColors.js';
 import { ponderCandidateSlots } from '../lib/enginePonder.js';
+import {
+  loadPersistedPlaySettings,
+  savePersistedPlaySettings,
+} from '../lib/persistedPlaySettings.js';
 
 function isSavedSettingsValid(playerType, saved, engineConfigs) {
   if (isTitaniumEngine(playerType, engineConfigs)) {
@@ -186,11 +190,21 @@ export class AppController {
     this.engineConfigs = getAllEngineConfigs();
 
     const v15Live = defaultPlayerAiSettings(PlayerType.TitaniumMinimax, this.engineConfigs);
-    const v15Frozen = defaultPlayerAiSettings(PlayerType.TitaniumV15Frozen, this.engineConfigs);
-    this.settings = {
-      players: [PlayerType.TitaniumMinimax, PlayerType.TitaniumV15Frozen],
-      playerAiSettings: [v15Live, v15Frozen],
+    const persisted = loadPersistedPlaySettings();
+    const playDefaults = {
+      players: [PlayerType.Human, PlayerType.TitaniumMinimax],
+      playerAiSettings: [null, { ...v15Live }],
       playerAiSettingsMemory: [{}, {}],
+    };
+    const restored = persisted
+      ? {
+          players: persisted.players.map((p) => normalizePlayerType(p)),
+          playerAiSettings: persisted.playerAiSettings ?? [{}, {}],
+          playerAiSettingsMemory: persisted.playerAiSettingsMemory ?? [{}, {}],
+        }
+      : playDefaults;
+    this.settings = {
+      ...restored,
       rotateBoard: false,
       displayCoordinates: true,
       displayRemainingWalls: true,
@@ -200,6 +214,12 @@ export class AppController {
       lmrVisionShallow: false,
       uiMode: 'play',
     };
+    for (let seat = 0; seat < 2; seat++) {
+      const playerType = this.settings.players[seat];
+      if (playerType !== PlayerType.Human) {
+        this.ensurePlayerAiSettingsSlot(seat + 1, playerType);
+      }
+    }
 
     this.replay = null;
     this.catViz = null;
@@ -239,6 +259,9 @@ export class AppController {
     this._thinkAiSettings = null;
     this._illegalRetriesByPly = {};
     this._maxIllegalRetries = 2;
+    /** Skip onSessionChange → onChange while applyEngineMove is mid-apply (snapshot not ready). */
+    this._suppressSessionNotify = false;
+    this._activeSearchSeq = 0;
 
     this.session.subscribe(() => this.onSessionChange());
     this.migrateLegacyPlayerTypes();
@@ -341,6 +364,114 @@ export class AppController {
     this.settings.players = this.settings.players.map((p) => normalizePlayerType(p));
   }
 
+  persistPlaySettings() {
+    if (this.settings.uiMode !== 'play') {
+      return;
+    }
+    savePersistedPlaySettings(this.settings);
+  }
+
+  restorePersistedPlayMatchup() {
+    const persisted = loadPersistedPlaySettings();
+    const v15Live = defaultPlayerAiSettings(PlayerType.TitaniumMinimax, this.engineConfigs);
+    const playDefaults = {
+      players: [PlayerType.Human, PlayerType.TitaniumMinimax],
+      playerAiSettings: [null, { ...v15Live }],
+      playerAiSettingsMemory: [{}, {}],
+    };
+    const restored = persisted
+      ? {
+          players: persisted.players.map((p) => normalizePlayerType(p)),
+          playerAiSettings: persisted.playerAiSettings ?? [{}, {}],
+          playerAiSettingsMemory: persisted.playerAiSettingsMemory ?? [{}, {}],
+        }
+      : playDefaults;
+    this.settings.players = restored.players;
+    this.settings.playerAiSettings = restored.playerAiSettings;
+    this.settings.playerAiSettingsMemory = restored.playerAiSettingsMemory;
+    for (let seat = 0; seat < 2; seat++) {
+      const playerType = this.settings.players[seat];
+      if (playerType !== PlayerType.Human) {
+        this.ensurePlayerAiSettingsSlot(seat + 1, playerType);
+      }
+    }
+    this.destroyAllEngines();
+  }
+
+  applyAnalysisCompareDefaults() {
+    const v13Js = defaultPlayerAiSettings(PlayerType.AceV13, this.engineConfigs);
+    v13Js.strengthLevel = 0;
+    const v15 = defaultPlayerAiSettings(PlayerType.TitaniumMinimax, this.engineConfigs);
+    this.settings.players = [PlayerType.AceV13, PlayerType.TitaniumMinimax];
+    this.settings.playerAiSettings = [v13Js, v15];
+    const memory = [{}, {}];
+    memory[0][PlayerType.AceV13] = { ...v13Js };
+    memory[1][PlayerType.TitaniumMinimax] = { ...v15 };
+    this.settings.playerAiSettingsMemory = memory;
+    this.destroyAllEngines();
+  }
+
+  isHumanVsAiPlay() {
+    if (this.isFreePlayMode()) {
+      return false;
+    }
+    const humanSeat = this.settings.players.indexOf(PlayerType.Human);
+    if (humanSeat < 0) {
+      return false;
+    }
+    return this.settings.players[1 - humanSeat] !== PlayerType.Human;
+  }
+
+  _cancelActiveAiSearch() {
+    const seat = this.thinkingSeatIndex;
+    if (seat != null) {
+      this.getEngineForSeat(seat)?.cancelSearch?.();
+      this.lastThinkBySeat[seat] = buildThinkSeatSnapshot({
+        engine: this.engineLabelForSeat(seat),
+        live: false,
+        stoppedBy: 'cancelled',
+        depthLog: this.searchInfoBySeat[seat]?.depthLog ?? [],
+        searchDepth: this.searchInfoBySeat[seat]?.searchDepth,
+        whiteDist: this.searchInfoBySeat[seat]?.whiteDist,
+        blackDist: this.searchInfoBySeat[seat]?.blackDist,
+        rootScore: this.searchInfoBySeat[seat]?.rootScore,
+        nodes: this.searchInfoBySeat[seat]?.nodes,
+        simulations: this.searchInfoBySeat[seat]?.simulations,
+      });
+    }
+    this.aiThinking = false;
+    this.thinkingPlayerType = null;
+    this.thinkingSeatIndex = null;
+    this.liveSearch = null;
+    this._moveRequestSeq += 1;
+    this._activeSearchSeq = 0;
+  }
+
+  _undoPlyCount() {
+    if (this.isFreePlayMode()) {
+      return 1;
+    }
+    if (!this.isHumanVsAiPlay()) {
+      return 1;
+    }
+    if (this.session.isHumanTurn(this.settings.players) && this.session.actions.length > 0) {
+      return 2;
+    }
+    return 1;
+  }
+
+  _finishUndo({ requestAi = false } = {}) {
+    this.liveSearch = null;
+    this.engineErrors = {};
+    for (const engine of this.engines.values()) {
+      engine.resetConnection();
+    }
+    this.onChange?.();
+    if (requestAi && !this.isFreePlayMode()) {
+      this.maybeRequestAiMove();
+    }
+  }
+
   setPlayer(playerNum, playerType) {
     if (playerType === PlayerType.Pavlosdais) {
       return;
@@ -365,6 +496,7 @@ export class AppController {
     ) {
       this.syncRemoteEngine(playerType);
     }
+    this.persistPlaySettings();
     this.onChange?.();
     this.maybeRequestAiMove();
   }
@@ -405,6 +537,7 @@ export class AppController {
     memory[playerType] = { ...aiSettings };
     this.settings.playerAiSettingsMemory[index] = memory;
     this.settings.playerAiSettings[index] = { ...aiSettings };
+    this.persistPlaySettings();
   }
 
   recordSettingsChange(playerNum, field, from, to) {
@@ -889,13 +1022,20 @@ export class AppController {
   }
 
   setUiMode(mode) {
+    const prevMode = this.settings.uiMode;
     this.settings.uiMode = mode;
+    if (mode === 'play' && prevMode !== 'play') {
+      this.restorePersistedPlayMatchup();
+    }
     if (mode === 'analysis') {
       this._moveRequestSeq += 1;
       this.replay = null;
       this.aiThinking = false;
       this.thinkingPlayerType = null;
       this.liveSearch = null;
+      if (prevMode !== 'analysis') {
+        this.applyAnalysisCompareDefaults();
+      }
     }
     this.scheduleCatRefresh();
     this.onChange?.();
@@ -1038,22 +1178,31 @@ export class AppController {
   }
 
   undo() {
-    if (this.aiThinking || this.replay) {
+    if (this.replay) {
+      return;
+    }
+    if (this.aiThinking) {
+      this._cancelActiveAiSearch();
+      if (!this.session.undo()) {
+        this.onChange?.();
+        return;
+      }
+      this._finishUndo({ requestAi: true });
       return;
     }
     this._moveRequestSeq += 1;
-    this.liveSearch = null;
-    this.engineErrors = {};
-    if (!this.session.undo()) {
+    const plies = this._undoPlyCount();
+    let undone = 0;
+    for (let i = 0; i < plies; i++) {
+      if (!this.session.undo()) {
+        break;
+      }
+      undone++;
+    }
+    if (undone === 0) {
       return;
     }
-    for (const engine of this.engines.values()) {
-      engine.resetConnection();
-    }
-    this.onChange?.();
-    if (!this.isFreePlayMode()) {
-      this.maybeRequestAiMove();
-    }
+    this._finishUndo({ requestAi: true });
   }
 
   redo() {
@@ -1065,13 +1214,7 @@ export class AppController {
     if (!this.session.redo()) {
       return;
     }
-    for (const engine of this.engines.values()) {
-      engine.resetConnection();
-    }
-    this.onChange?.();
-    if (!this.isFreePlayMode()) {
-      this.maybeRequestAiMove();
-    }
+    this._finishUndo({ requestAi: true });
   }
 
   tryAction(action) {
@@ -1129,6 +1272,9 @@ export class AppController {
   }
 
   onSessionChange() {
+    if (this._suppressSessionNotify) {
+      return;
+    }
     if (!this.aiThinking) {
       this.lmrVizLive = null;
     }
@@ -1263,7 +1409,11 @@ export class AppController {
           depthLog,
         });
         if (info.thinking) {
-          if (this.thinkingSeatIndex != null && this.thinkingSeatIndex !== seatIndex) {
+          if (
+            !this.aiThinking ||
+            this.thinkingSeatIndex !== seatIndex ||
+            this._activeSearchSeq !== this._moveRequestSeq
+          ) {
             return;
           }
           const si = this.searchInfoBySeat[seatIndex];
@@ -1273,6 +1423,7 @@ export class AppController {
             playerType,
             seatIndex,
             playerLabel: this.engineLabelForSeat(seatIndex),
+            requestSeq: this._activeSearchSeq,
             simulations: si.simulations ?? 0,
             nodes: si.nodes ?? 0,
             progress: info.progress,
@@ -1331,6 +1482,14 @@ export class AppController {
           return;
         }
         if (info.progress !== undefined && info.p1 === undefined && !info.pv && !info.stoppedBy) {
+          return;
+        }
+        if (
+          info.stoppedBy &&
+          this.aiThinking &&
+          this.thinkingSeatIndex === seatIndex &&
+          this._activeSearchSeq !== this._moveRequestSeq
+        ) {
           return;
         }
         if (info.pv) {
@@ -1801,7 +1960,9 @@ export class AppController {
     this.liveSearch = null;
     this.lmrVizLive = null;
 
+    this._suppressSessionNotify = true;
     const applied = this.session.applyAction(action);
+    this._suppressSessionNotify = false;
     if (applied) {
       const plyNum = this.session.actions.length;
       const si = siBeforeMove;
@@ -1902,6 +2063,7 @@ export class AppController {
 
     const requestSnapshot = this.session.getSnapshot();
     const requestSeq = ++this._moveRequestSeq;
+    this._activeSearchSeq = requestSeq;
     const requestPly = requestSnapshot.actions.length;
     const requestPlayerToMove = requestSnapshot.playerToMove;
     const requestHistory = this.session.actions.map((a) => toAlgebraic(a)).join(' ');
@@ -1919,6 +2081,7 @@ export class AppController {
       playerLabel: this.engineLabelForSeat(seatIndex),
       mode: 'searching',
       depthLog: [],
+      requestSeq,
     };
     this.lmrVizLive = null;
     if (this.settings.showLmrVision && isTitaniumEngine(playerType, this.engineConfigs)) {
