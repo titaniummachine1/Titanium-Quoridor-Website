@@ -7,7 +7,7 @@ function isCompleteGame(r) {
   if (!r || r.aborted) return false;
   const plies = r.plies ?? (Array.isArray(r.moves) ? r.moves.length : 0);
   if (plies < MIN_PLIES) return false;
-  if (r.draw || r.winner === 0) return false;
+  if (r.incomplete || r.winner === 0) return false;
   return true;
 }
 

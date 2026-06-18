@@ -82,7 +82,10 @@ async function upsertMatchup({
   });
 }
 
-async function upsertGame({ moves, result, tag, gamesFile, releaseRemote, gameId }) {
+async function upsertGame({
+  moves, result, tag, gamesFile, releaseRemote, gameId,
+  curriculumOpponent, ourWin, opponentVisits,
+}) {
   return request('POST', '/api/game', {
     moves,
     result,
@@ -90,6 +93,9 @@ async function upsertGame({ moves, result, tag, gamesFile, releaseRemote, gameId
     games_file: gamesFile || undefined,
     release_remote: releaseRemote || undefined,
     game_id: gameId || undefined,
+    curriculum_opponent: curriculumOpponent || undefined,
+    our_win: typeof ourWin === 'boolean' ? ourWin : undefined,
+    opponent_visits: opponentVisits ?? undefined,
   });
 }
 

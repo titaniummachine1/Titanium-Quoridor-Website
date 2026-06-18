@@ -13,6 +13,7 @@ export class TitaniumWasmEngineClient {
     this.algebraicMoves = [];
     this.pendingRequest = null;
     this.queuedRequest = null;
+    this.workerCrashRetries = 0;
   }
 
   ensureWorker() {
@@ -82,6 +83,7 @@ export class TitaniumWasmEngineClient {
         const elapsed = performance.now() - pending.started;
         const meta = pending.finalMeta ?? {};
         this.setStatus('idle');
+        this.workerCrashRetries = 0;
         pending.onInfo?.({
           time: elapsed,
           elapsedMs: meta.elapsedMs ?? Math.round(elapsed),
@@ -108,6 +110,14 @@ export class TitaniumWasmEngineClient {
     this.worker.onerror = (event) => {
       const pending = this.pendingRequest;
       this.pendingRequest = null;
+      this.worker?.terminate();
+      this.worker = null;
+      if (pending?.retryParams && this.workerCrashRetries < 1) {
+        this.workerCrashRetries += 1;
+        this.setStatus('connecting');
+        this.startRequest({ ...pending.retryParams, isFreshGame: false });
+        return;
+      }
       this.setStatus('error');
       const message =
         event?.message ?? (typeof event === 'string' ? event : null) ?? 'Titanium WASM worker crashed';
@@ -173,6 +183,7 @@ export class TitaniumWasmEngineClient {
   }
 
   startRequest({ aiSettings, moveHistory, isFreshGame }) {
+    const retryParams = { aiSettings, moveHistory, isFreshGame };
     if (isFreshGame) {
       this.algebraicMoves = [];
     } else if (moveHistory?.length) {
@@ -191,6 +202,7 @@ export class TitaniumWasmEngineClient {
       started,
       timeMs,
       finalMeta: {},
+      retryParams,
       onInfo: (info) => this.onInfo?.(info),
       onBestMove: (action) => {
         this.pendingRequest = null;

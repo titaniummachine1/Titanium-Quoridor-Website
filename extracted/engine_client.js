@@ -280,6 +280,18 @@ class QuoridorEngineClient {
     this.setStatus('searching');
   }
 
+  goExact(visits, timeMode = 'short') {
+    const exact = Math.max(1, Math.min(1_000_000, Math.trunc(Number(visits))));
+    if (!Number.isFinite(exact)) {
+      throw new Error(`invalid exact visit budget: ${visits}`);
+    }
+    this.outstandingSearches++;
+    this.send(`setoption name visits value ${exact}`);
+    this.sendEngineSettings(timeMode);
+    this.send('go');
+    this.setStatus('searching');
+  }
+
   ponder() {
     if (this.outstandingSearches > 0 || this.isPondering) {
       return;

@@ -252,11 +252,12 @@ function emptyBoardState() {
 }
 
 class RemoteEngine {
-  constructor(opp, timeMode, progress, slot) {
+  constructor(opp, timeMode, progress, slot, exactVisits = null) {
     this.timeMode = timeMode;
     this.opp = opp;
     this.progress = progress;
     this.slot = slot;
+    this.exactVisits = exactVisits;
     this._pending = null;
     this._error = null;
     this._connected = false;
@@ -477,7 +478,11 @@ class RemoteEngine {
           finish(() => res({ move: gl.toAlgebraic(action), thinkSec }));
         };
         try {
-          this.client.go(this.timeMode);
+          if (this.exactVisits != null) {
+            this.client.goExact(this.exactVisits, this.timeMode);
+          } else {
+            this.client.go(this.timeMode);
+          }
         } catch (e) {
           finish(() => rej(e));
         }
@@ -510,7 +515,8 @@ async function playGame(opts, gl, gameIdx, ourIsP1, slot, progress) {
   const { QuoridorBoard } = gl;
   const board = new QuoridorBoard();
   const our = new OurEngine(opts.bin, opts.engine);
-  const remote = new RemoteEngine(opts.opp, opts.oppTime, progress, slot);
+  const timingMode = opts.timingMode || opts.oppTime;
+  const remote = new RemoteEngine(opts.opp, timingMode, progress, slot, opts.oppVisits ?? null);
 
   const matchLabel = opts.matchLabel || process.env.MATCH_LABEL || '';
   progress.start(slot, gameIdx, opts.maxPly, matchLabel);
@@ -524,11 +530,11 @@ async function playGame(opts, gl, gameIdx, ourIsP1, slot, progress) {
   // Fair time: our budget tracks Ka peak but capped (default 15s) — remote display uses full fairBudgetSec.
   let gameMaxRemoteSec = 0;
   let ourThinkSec = opts.fairTime
-    ? fairOurThinkSec(opts.opp, opts.oppTime, 0)
+    ? fairOurThinkSec(opts.opp, timingMode, 0)
     : opts.ourTime;
   if (opts.fairTime) {
     vlog(opts, gameIdx,
-      `fair budget ${ourThinkSec.toFixed(1)}s (cap ${FAIR_OUR_THINK_CAP_SEC}s for ${opts.opp}@${opts.oppTime})`,
+      `fair budget ${ourThinkSec.toFixed(1)}s (cap ${FAIR_OUR_THINK_CAP_SEC}s for ${opts.opp}@${timingMode})`,
     );
   }
 
@@ -576,16 +582,16 @@ async function playGame(opts, gl, gameIdx, ourIsP1, slot, progress) {
         }
 
         const remoteBudget = opts.fairTime
-          ? fairBudgetSec(opts.opp, opts.oppTime, gameMaxRemoteSec)
+          ? fairBudgetSec(opts.opp, timingMode, gameMaxRemoteSec)
           : opts.ourTime;
-        const remoteTimeout = remoteMoveTimeoutSec(opts.opp, opts.oppTime);
+        const remoteTimeout = remoteMoveTimeoutSec(opts.opp, timingMode);
         statusLog(opts, `${opts.opp}@${opts.oppTime} search (budget ~${remoteBudget.toFixed(0)}s, timeout ${remoteTimeout}s)`);
 
         const gameId = opts.gameId || process.env.GAME_ID || 'unknown';
         const runRemoteSearch = async () => {
           if (opts.opp === 'ka') {
             progress.thinking(slot, 'ka-queue', 30);
-            const queueTimeout = kaQueueAcquireTimeoutSec(opts.oppTime);
+            const queueTimeout = kaQueueAcquireTimeoutSec(timingMode);
             await coord.acquireKaSearch(opts.oppTime, gameId, queueTimeout);
           }
           await remote.prepareForSearch({ afterQueue: opts.opp === 'ka' });
@@ -605,12 +611,12 @@ async function playGame(opts, gl, gameIdx, ourIsP1, slot, progress) {
           runRemoteSearch,
         );
         mv = remoteRes.move;
-        if (remoteRes.thinkSec >= minThinkSec(opts.opp, opts.oppTime)) {
+        if (remoteRes.thinkSec >= minThinkSec(opts.opp, timingMode)) {
           gameMaxRemoteSec = Math.max(gameMaxRemoteSec, remoteRes.thinkSec);
         }
-        recordThink(opts.opp, opts.oppTime, remoteRes.thinkSec);
+        recordThink(opts.opp, timingMode, remoteRes.thinkSec);
         ourThinkSec = opts.fairTime
-          ? fairOurThinkSec(opts.opp, opts.oppTime, gameMaxRemoteSec)
+          ? fairOurThinkSec(opts.opp, timingMode, gameMaxRemoteSec)
           : opts.ourTime;
         vlog(opts, gameIdx,
           `${opts.opp}@${opts.oppTime} thought ${remoteRes.thinkSec.toFixed(1)}s` +
@@ -655,11 +661,6 @@ async function playGame(opts, gl, gameIdx, ourIsP1, slot, progress) {
     remote.destroy();
   }
 
-  if (winner === 0) {
-    const d1 = gl.shortestDistanceToGoal(board, 1);
-    const d2 = gl.shortestDistanceToGoal(board, 2);
-    winner = d1 < d2 ? 1 : d2 < d1 ? 2 : 0;
-  }
   const ourWin = winner !== 0 && (winner === 1) === ourIsP1;
   progress.finish(slot, {
     plies: moves.length,
@@ -669,7 +670,7 @@ async function playGame(opts, gl, gameIdx, ourIsP1, slot, progress) {
     gameIdx,
     winner,
     ourWin,
-    draw: winner === 0,
+    incomplete: winner === 0,
     plies: moves.length,
     moves,
     aborted: false,
@@ -727,7 +728,6 @@ async function main() {
         continue;
       }
 
-      if (r.draw) continue;
       if (!isCompleteGame(r)) {
         progress.note(`game ${idx}: skip incomplete (${r.plies} plies)`);
         continue;
