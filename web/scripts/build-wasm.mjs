@@ -2,6 +2,10 @@
  * Compile monorepo engine (Rust) → web/src/wasm/titanium for GitHub Pages.
  * Uses ../../engine (canonical v15 + net_weights.bin), not stale site/engine submodule.
  * Requires: rustup target add wasm32-unknown-unknown, cargo install wasm-pack
+ *
+ * Native `titanium.exe` must use RUSTFLAGS=-C target-cpu=native (BMI2/PEXT movegen).
+ * Wasm is wasm32-unknown-unknown — never pass host CPU flags here; PEXT is cfg-gated
+ * off on non-x86 and the browser uses the scalar O1 table path + embed-tables.
  */
 
 import { spawnSync } from 'node:child_process';
@@ -25,7 +29,9 @@ const wasmBindgen =
     ? path.join(process.env.USERPROFILE ?? '', '.cargo', 'bin', 'wasm-bindgen.exe')
     : 'wasm-bindgen');
 
-const env = { ...process.env, WASM_BINDGEN: wasmBindgen };
+// Strip inherited RUSTFLAGS (e.g. target-cpu=native from training guards) — invalid for wasm32.
+const { RUSTFLAGS: _dropNativeRustflags, ...hostEnv } = process.env;
+const env = { ...hostEnv, WASM_BINDGEN: wasmBindgen };
 
 const result = spawnSync(
   'wasm-pack',
