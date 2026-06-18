@@ -165,8 +165,17 @@ async function runLocal(p, slot, gl, progress) {
   let aW = prior.aW;
   let bW = prior.bW;
 
-  const r = await selfMatch.playGame(opts, gl, 0, true, slot, progress);
-  const gameResult = { winner: r.winner, plies: r.plies, moves: r.moves, draw: false, aborted: false };
+  const gameIndex = Number.isInteger(p.game_index) ? p.game_index : 0;
+  const ourIsP1 = p.our_is_p1 !== false;
+  const r = await selfMatch.playGame(opts, gl, gameIndex, ourIsP1, slot, progress);
+  const gameResult = {
+    winner: r.winner,
+    plies: r.plies,
+    moves: r.moves,
+    incomplete: r.incomplete,
+    draw: false,
+    aborted: false,
+  };
   if (!isCompleteGame(gameResult)) {
     return { label, plies: r.plies, aW, bW, skipped: true };
   }

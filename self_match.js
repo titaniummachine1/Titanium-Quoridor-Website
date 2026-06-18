@@ -368,28 +368,17 @@ async function playGame(opts, gl, gameIdx, aIsP1, slot, progress) {
     await engB.destroy();
   }
 
-  if (winner === 0) {
-    // Quoridor has no draws — ply-cap adjudication must always pick a winner.
-    const d1 = gl.shortestDistanceToGoal(board, 1);
-    const d2 = gl.shortestDistanceToGoal(board, 2);
-    if (d1 !== d2) {
-      winner = d1 < d2 ? 1 : 2;
-    } else {
-      const w1 = board.wallsRemaining({ playerNum: 1 });
-      const w2 = board.wallsRemaining({ playerNum: 2 });
-      winner = w1 !== w2 ? (w1 > w2 ? 1 : 2) : 1;
-    }
-  }
-
-  const aWins = (winner === 1) === aIsP1;
+  const incomplete = winner === 0;
+  const aWins = !incomplete && (winner === 1) === aIsP1;
   progress.finish(slot, {
     plies: moves.length,
-    label: aWins ? 'A wins' : 'B wins',
+    label: incomplete ? 'incomplete retry' : (aWins ? 'A wins' : 'B wins'),
   });
   return {
     gameIdx,
     winner,
     aWins,
+    incomplete,
     plies: moves.length,
     moves,
   };
@@ -531,6 +520,12 @@ async function main() {
         r = await playGame(opts, gl, idx, aIsP1, slot, progress);
       } catch (e) {
         progress.note(`game ${idx} error: ${e.message}`);
+        progress.idle(slot);
+        continue;
+      }
+
+      if (r.incomplete) {
+        progress.note(`game ${idx} incomplete at ${r.plies} plies; result discarded`);
         progress.idle(slot);
         continue;
       }
