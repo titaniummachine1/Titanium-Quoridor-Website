@@ -53,6 +53,56 @@ const readline   = require('readline');
 const path       = require('path');
 const { ProgressBoard, MAX_SLOTS } = require('./progress_bars');
 
+const ENGINE_READY_TIMEOUT_MIN_MS = 30_000;
+const ENGINE_READY_TIMEOUT_MAX_MS = 60_000;
+const ENGINE_READY_TIMEOUT_STARTUP_MARGIN_MS = 10_000;
+const ENGINE_READY_TIMEOUT_PROTOCOL_MARGIN_MS = 5_000;
+const ENGINE_READY_TIMEOUT_LOAD_MULTIPLIER = 2;
+
+const ENGINE_GO_TIMEOUT_MIN_MS = 30_000;
+const ENGINE_GO_TIMEOUT_MAX_MS = 90_000;
+const ENGINE_GO_TIMEOUT_STARTUP_MARGIN_MS = 15_000;
+const ENGINE_GO_TIMEOUT_PROTOCOL_MARGIN_MS = 5_000;
+const ENGINE_GO_TIMEOUT_LOAD_MULTIPLIER = 3;
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function deriveEngineCommandTimeoutMs(seconds, phase = 'go') {
+  const budgetMs = Math.max(1000, Number(seconds || 0) * 1000);
+  if (phase === 'ready') {
+    return clamp(
+      Math.ceil(
+        budgetMs * ENGINE_READY_TIMEOUT_LOAD_MULTIPLIER
+        + ENGINE_READY_TIMEOUT_STARTUP_MARGIN_MS
+        + ENGINE_READY_TIMEOUT_PROTOCOL_MARGIN_MS,
+      ),
+      ENGINE_READY_TIMEOUT_MIN_MS,
+      ENGINE_READY_TIMEOUT_MAX_MS,
+    );
+  }
+  return clamp(
+    Math.ceil(
+      budgetMs * ENGINE_GO_TIMEOUT_LOAD_MULTIPLIER
+      + ENGINE_GO_TIMEOUT_STARTUP_MARGIN_MS
+      + ENGINE_GO_TIMEOUT_PROTOCOL_MARGIN_MS,
+    ),
+    ENGINE_GO_TIMEOUT_MIN_MS,
+    ENGINE_GO_TIMEOUT_MAX_MS,
+  );
+}
+
+function formatEnginePhaseTimeout(error, details) {
+  const { timeoutMs, engine, phase, tcSec, ply, elapsedMs, pid, exitCode, killed } = details;
+  const base = error instanceof Error ? error.message : String(error);
+  const prefix = base.startsWith('engine read timeout') ? base : `engine command timeout (${timeoutMs}ms)`;
+  return new Error(
+    `${prefix} | engine=${engine} phase=${phase} tc=${tcSec}s ply=${ply} `
+    + `elapsed=${elapsedMs}ms pid=${pid ?? 'n/a'} exit=${exitCode ?? 'live'} killed=${killed ? 'yes' : 'no'}`,
+  );
+}
+
 // ── CLI parsing ───────────────────────────────────────────────────────────────
 
 const MAX_CONCURRENCY = 8;  // 2 engine processes per game (A + B ponder freely)
@@ -212,8 +262,7 @@ class Engine {
   }
 
   _moveTimeoutMs(seconds) {
-    const budget = Math.max(1000, Number(seconds) * 1000);
-    return budget + 20000;
+    return deriveEngineCommandTimeoutMs(seconds, 'go');
   }
 
   /**
@@ -235,13 +284,20 @@ class Engine {
     if (!this.proc || this.proc.exitCode != null) {
       throw new Error(`engine ${this.flag} process exited`);
     }
-    const timeoutMs = this._moveTimeoutMs(seconds);
+    const readyTimeoutMs = deriveEngineCommandTimeoutMs(seconds, 'ready');
+    const searchTimeoutMs = this._moveTimeoutMs(seconds);
+    let readyStartedAt = 0;
+    let searchStartedAt = 0;
+    let phase = 'ready';
     try {
       this.stderrLines = [];
+      readyStartedAt = Date.now();
       this._send(moves.length ? `position ${moves.join(' ')}` : 'reset');
-      await this._awaitAny(['ready'], timeoutMs);
+      await this._awaitAny(['ready'], readyTimeoutMs);
+      phase = 'go';
+      searchStartedAt = Date.now();
       this._send(`go ${seconds}`);
-      const line = await this._awaitAny(['bestmove'], timeoutMs);
+      const line = await this._awaitAny(['bestmove'], searchTimeoutMs);
       const mv = line.slice('bestmove '.length).trim();
 
       let pvOpponentReply = null;
@@ -257,9 +313,34 @@ class Engine {
       }
       return { move: mv, pvOpponentReply };
     } catch (e) {
+      const beforeKill = {
+        pid: this.proc?.pid ?? null,
+        exitCode: this.proc?.exitCode ?? null,
+      };
       try { this._send('quit'); } catch {}
-      try { this.proc.kill(); } catch {}
-      throw e;
+      let killed = false;
+      try {
+        if (this.proc && this.proc.exitCode == null) {
+          this.proc.kill();
+          killed = true;
+        }
+      } catch {}
+      const baseMessage = e instanceof Error ? e.message : String(e);
+      const isTimeout = /engine read timeout|engine command timeout/i.test(baseMessage);
+      if (!isTimeout) throw e;
+      const timeoutMs = phase === 'ready' ? readyTimeoutMs : searchTimeoutMs;
+      const startedAt = phase === 'ready' ? readyStartedAt : searchStartedAt;
+      throw formatEnginePhaseTimeout(e, {
+        timeoutMs,
+        engine: this.flag,
+        phase,
+        tcSec: seconds,
+        ply: moves.length,
+        elapsedMs: Date.now() - startedAt,
+        pid: beforeKill.pid,
+        exitCode: beforeKill.exitCode,
+        killed,
+      });
     }
   }
 
@@ -593,6 +674,9 @@ if (require.main === module) {
 }
 
 module.exports = {
+  Engine,
+  deriveEngineCommandTimeoutMs,
+  formatEnginePhaseTimeout,
   playGame,
   persistGame,
   loadPriorMatchup,
