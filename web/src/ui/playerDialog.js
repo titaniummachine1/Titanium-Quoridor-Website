@@ -136,6 +136,12 @@ export function openPlayerDialog(state, controller, { mode = 'newgame' } = {}) {
         '<div class="player-dialog__hint">White starts at the bottom and moves upward. Black starts at the top and moves downward.</div>' +
         renderSeatSection(0, selections, groups) +
         renderSeatSection(1, selections, groups) +
+        '<div class="player-dialog__options">' +
+          '<label class="player-dialog__option-row">' +
+            '<input type="checkbox" data-option="bestMoveHint"' + (state.settings?.showBestMoveHint !== false ? ' checked' : '') + '>' +
+            ' Show best-move hint on board while engine thinks' +
+          '</label>' +
+        '</div>' +
       '</div>' +
       '<div class="player-dialog__footer">' +
         '<button class="btn btn--primary player-dialog__start" data-action="start">' +
@@ -174,6 +180,9 @@ export function openPlayerDialog(state, controller, { mode = 'newgame' } = {}) {
       timeToMove:  selections.timeToMove,
       aceStrength: selections.aceStrength,
     });
+    // Apply display toggles immediately via controller
+    const bmHint = overlay.querySelector('[data-option="bestMoveHint"]')?.checked ?? true;
+    controller.toggleBestMoveHint?.(bmHint);
     applySelections(selections, isNewGame, controller, state);
     overlay.remove();
     currentDialog = null;

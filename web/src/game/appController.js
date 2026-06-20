@@ -212,6 +212,7 @@ export class AppController {
       showCatVision: false,
       showLmrVision: false,
       lmrVisionShallow: false,
+      showBestMoveHint: true,
       uiMode: 'play',
     };
     for (let seat = 0; seat < 2; seat++) {
@@ -758,6 +759,11 @@ export class AppController {
       this.lmrVizLoading = false;
       this.showLmrHint = false;
     }
+    this.onChange?.();
+  }
+
+  toggleBestMoveHint(enabled = !this.settings.showBestMoveHint) {
+    this.settings.showBestMoveHint = Boolean(enabled);
     this.onChange?.();
   }
 

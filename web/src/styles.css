@@ -2198,6 +2198,22 @@ body {
   text-align: center;
 }
 
+.player-dialog__options {
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+  margin-top: 4px;
+}
+
+.player-dialog__option-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.82rem;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+}
+
 .player-dialog__footer {
   display: flex;
   gap: 8px;
