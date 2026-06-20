@@ -11,6 +11,7 @@ import { useStaticEngineBackend } from '../lib/engineBackend.js';
 import { validateMovesWithRust } from '../lib/rustMoveValidate.js';
 import { resolveOnBestMoveResult } from '../lib/onBestMoveResult.js';
 import { resolveLiveBestMoveKey } from '../lib/liveBestMove.js';
+import { isAbortError } from '../lib/engineAbort.js';
 import { AceV10JsEngineClient } from '../lib/aceV10JsEngine.js';
 import { AceV13JsEngineClient } from '../lib/aceV13JsEngine.js';
 import { AceRustWasmEngineClient } from '../lib/aceRustWasmClient.js';
@@ -1561,7 +1562,9 @@ export class AppController {
         if (this.thinkingSeatIndex !== seatIndex) {
           return;
         }
-        const message = err?.message ?? String(err ?? 'Engine error');
+        if (isAbortError(err)) {
+          return;
+        }
         this.recordEngineFailure(playerType, {
           ply: this.session.actions.length + 1,
           error: err,
@@ -1802,6 +1805,9 @@ export class AppController {
   }
 
   recordEngineFailure(playerType, { ply, error, budget }) {
+    if (isAbortError(error)) {
+      return;
+    }
     const message = error?.message ?? String(error ?? 'Engine error');
     const position = this.session.actions.map((a) => toAlgebraic(a)).join(' ') || '(start)';
     const legal = this.session
@@ -2151,6 +2157,9 @@ export class AppController {
         return;
       }
       if (requestSeq !== this._moveRequestSeq || this.thinkingSeatIndex !== seatIndex) {
+        return;
+      }
+      if (isAbortError(err)) {
         return;
       }
       this.recordEngineFailure(playerType, {
