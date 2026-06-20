@@ -474,6 +474,59 @@ assertEqual(v3Set.size, 81 + 128, 'v3 codec produces unique integers for all 209
 assertEqual(aceSet.size, 81 + 128, 'ace codec produces unique integers for all 209 moves');
 console.log(`  → ${passed - uniqStart} passed`);
 
+// ── Test 10: Flipped grid transforms — 81 cells + 128 walls ───────────────
+const flipStart = passed;
+console.log('\n[10] Flipped grid index ↔ canonical transforms');
+
+for (const isFlipped of [false, true]) {
+  const orient = isFlipped ? 'flipped' : 'normal';
+  const cellSet = new Set();
+  for (let y = 0; y < 9; y++) {
+    for (let x = 0; x < 9; x++) {
+      const { h, p } = canonicalCellToGridIndex(x, y, numRows, numCols, isFlipped);
+      const back = gridIndexToCanonicalCell(h, p, numRows, numCols, isFlipped);
+      assert(back !== null, `${orient} cell round-trip null at x=${x} y=${y}`);
+      if (back) {
+        assertEqual(back.x, x, `${orient} cell.x at x=${x} y=${y}`);
+        assertEqual(back.y, y, `${orient} cell.y at x=${x} y=${y}`);
+        cellSet.add(`${h},${p}`);
+      }
+    }
+  }
+  assertEqual(cellSet.size, 81, `${orient} maps 81 unique grid squares`);
+
+  const wallSet = new Set();
+  for (let h = 0; h < numCols * 2 - 1; h++) {
+    for (let p = 0; p < numRows * 2 - 1; p++) {
+      const wall = gridIndexToCanonicalWall(h, p, numRows, numCols, isFlipped);
+      if (!wall) continue;
+      const key = `${wall.wx},${wall.wy},${wall.wallType}`;
+      wallSet.add(key);
+    }
+  }
+  assertEqual(wallSet.size, 128, `${orient} exposes 128 wall slots on grid`);
+}
+
+console.log(`  → ${passed - flipStart} passed`);
+
+// ── Test 11: Notation invariance under flip mapping ───────────────────────
+const notStart = passed;
+console.log('\n[11] Algebraic notation invariance (flip is visual-only)');
+for (let col = 0; col < 9; col++) {
+  for (let row = 1; row <= 9; row++) {
+    const alg = `${String.fromCharCode(97 + col)}${row}`;
+    const x = col;
+    const y = row - 1;
+    for (const isFlipped of [false, true]) {
+      const { h, p } = canonicalCellToGridIndex(x, y, numRows, numCols, isFlipped);
+      const back = gridIndexToCanonicalCell(h, p, numRows, numCols, isFlipped);
+      const backAlg = `${String.fromCharCode(97 + back.x)}${back.y + 1}`;
+      assertEqual(backAlg, alg, `notation ${alg} unchanged when flipped=${isFlipped}`);
+    }
+  }
+}
+console.log(`  → ${passed - notStart} passed`);
+
 // ── Summary ────────────────────────────────────────────────────────────────
 
 // Local function needed for test 8 (inline to avoid import issues in Node)
@@ -492,22 +545,35 @@ function gridIndexToCanonicalWall(h, p, numRows, numCols, isFlipped) {
   if (!isEvenRow && !isEvenCol) return null;
 
   if (!isEvenRow && isEvenCol) {
-    // Horizontal wall
-    const colIdx = Math.floor(h / 2);
-    const upperCellY = isFlipped ? Math.floor(p / 2) : numRows - 1 - Math.floor(p / 2);
-    const wy = isFlipped ? upperCellY : upperCellY - 1;
-    const wx = colIdx;
+    const cellX = isFlipped
+      ? numCols - 1 - Math.floor(h / 2)
+      : Math.floor(h / 2);
+    const upperY = isFlipped
+      ? Math.floor(p / 2)
+      : numRows - 1 - Math.floor(p / 2);
+    const wy = isFlipped ? upperY : upperY - 1;
+    const wx = isFlipped ? numCols - 1 - cellX : cellX;
     if (wx < 0 || wx >= 8 || wy < 0 || wy >= 8) return null;
     return { wx, wy, wallType: 'h' };
   }
 
-  // Vertical wall
-  const rowIdx = isFlipped ? Math.floor(p / 2) : numRows - 1 - Math.floor(p / 2);
-  const leftColIdx = Math.floor(h / 2);
-  const wy = rowIdx;
-  const wx = leftColIdx;
+  const cellY = isFlipped
+    ? Math.floor(p / 2)
+    : numRows - 1 - Math.floor(p / 2);
+  const leftX = isFlipped
+    ? numCols - 1 - Math.floor(h / 2)
+    : Math.floor(h / 2);
+  const wy = cellY;
+  const wx = isFlipped ? leftX - 1 : leftX;
   if (wx < 0 || wx >= 8 || wy < 0 || wy >= 8) return null;
   return { wx, wy, wallType: 'v' };
+}
+
+function canonicalCellToGridIndex(x, y, numRows, numCols, isFlipped = false) {
+  if (isFlipped) {
+    return { h: (numCols - 1 - x) * 2, p: y * 2 };
+  }
+  return { h: x * 2, p: (numRows - 1 - y) * 2 };
 }
 
 console.log('\n════════════════════════════════');

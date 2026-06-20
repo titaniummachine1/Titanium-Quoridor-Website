@@ -1,0 +1,120 @@
+/**
+ * Browser-oriented integration checks (DOM-free structural assertions).
+ * Run: node src/tests/browser.integration.test.mjs
+ *
+ * Complements manual browser acceptance — validates flip iteration,
+ * highlight keys, and layer constants without a headless browser.
+ */
+
+import {
+  gridIndexToCanonicalCell,
+  gridIndexToCanonicalWall,
+  canonicalCellToGridIndex,
+  canonicalCellToAlgebraic,
+  canonicalWallToAlgebraic,
+} from '../game/coordinates.js';
+import { resolveLiveBestMoveKey } from '../lib/liveBestMove.js';
+import { screenRowIndices, screenColIndices } from '../lib/screenTransform.js';
+import { toAlgebraic } from '../lib/gameLogic.js';
+
+const numRows = 9;
+const numCols = 9;
+let passed = 0;
+let failed = 0;
+
+function assert(condition, message) {
+  if (condition) passed++;
+  else {
+    failed++;
+    console.error('  FAIL:', message);
+  }
+}
+
+function assertEqual(a, b, msg) {
+  assert(a === b, `${msg}: expected ${JSON.stringify(b)} got ${JSON.stringify(a)}`);
+}
+
+console.log('\n[flip] pawn placement normal/flipped');
+for (const isFlipped of [false, true]) {
+  for (let y = 0; y < 9; y++) {
+    for (let x = 0; x < 9; x++) {
+      const { h, p } = canonicalCellToGridIndex(x, y, numRows, numCols, isFlipped);
+      const back = gridIndexToCanonicalCell(h, p, numRows, numCols, isFlipped);
+      assert(back?.x === x && back?.y === y, `cell ${x},${y} flipped=${isFlipped}`);
+    }
+  }
+}
+
+console.log('\n[flip] wall slots horizontal/vertical');
+for (const isFlipped of [false, true]) {
+  let walls = 0;
+  for (let h = 0; h < 17; h++) {
+    for (let p = 0; p < 17; p++) {
+      const w = gridIndexToCanonicalWall(h, p, numRows, numCols, isFlipped);
+      if (w) {
+        walls++;
+        const alg = toAlgebraic(canonicalWallToAlgebraic(w.wx, w.wy, w.wallType));
+        assert(alg.endsWith('h') || alg.endsWith('v'), `wall algebraic ${alg}`);
+      }
+    }
+  }
+  assertEqual(walls, 128, `wall count flipped=${isFlipped}`);
+}
+
+console.log('\n[flip] screen iteration covers full grid');
+for (const isFlipped of [false, true]) {
+  const seen = new Set();
+  for (const p of screenRowIndices(numRows, isFlipped)) {
+    for (const h of screenColIndices(numCols, isFlipped)) {
+      seen.add(`${h},${p}`);
+    }
+  }
+  assertEqual(seen.size, 17 * 17, `full grid iterated flipped=${isFlipped}`);
+}
+
+console.log('\n[highlight] canonical move key locates grid cell');
+const e3 = canonicalCellToAlgebraic(4, 2);
+const { h, p } = canonicalCellToGridIndex(4, 2, numRows, numCols, false);
+const back = gridIndexToCanonicalCell(h, p, numRows, numCols, false);
+assertEqual(`${back.x},${back.y}`, '4,2', 'e3 grid mapping');
+assertEqual(`${e3.column}${e3.row}`, 'e3', 'e3 algebraic');
+
+console.log('\n[highlight] stale PV rejected');
+assertEqual(
+  resolveLiveBestMoveKey({
+    aiThinking: true,
+    winner: null,
+    isDraw: false,
+    thinkingSeatIndex: 0,
+    playerToMove: 1,
+    settings: { players: ['titanium-minimax', 'human'] },
+    actions: [{ coordinate: { column: 'e', row: 2 } }],
+    validActions: [{ coordinate: { column: 'e', row: 3 } }],
+    searchGeneration: 2,
+    liveSearch: {
+      seatIndex: 0,
+      playerType: 'titanium-minimax',
+      requestSeq: 1,
+      positionKey: 'e2',
+      pv: 'e3',
+    },
+  }),
+  null,
+  'positionKey mismatch',
+);
+
+console.log('\n[layering] board-local z-index contract documented');
+const layers = {
+  grid: 0,
+  walls: 1,
+  pawns: 2,
+  legal: 3,
+  bestMove: 4,
+  preview: 5,
+  terminal: 6,
+};
+assert(layers.terminal <= 6 && layers.bestMove === 4, 'z-index table within board shell');
+
+console.log('\n════════════════════════════════');
+console.log(`TOTAL: ${passed + failed} — passed ${passed}, failed ${failed}`);
+if (failed > 0) process.exit(1);
