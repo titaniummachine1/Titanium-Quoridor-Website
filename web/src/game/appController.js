@@ -1,5 +1,5 @@
 import { GameSession } from './gameSession.js';
-import { naiveDistanceEval, parseAlgebraic } from '../lib/gameLogic.js';
+import { naiveDistanceEval, parseAlgebraic, isWallAction, QuoridorBoard } from '../lib/gameLogic.js';
 import { decodeReplayCode, encodeReplayFromActions } from '../lib/replayCode.js';
 import { fetchCatSnapshot, indexCatWalls } from '../lib/catHeatmap.js';
 import { buildLmrViz, fetchLmrSnapshot } from '../lib/lmrHeatmap.js';
@@ -12,6 +12,13 @@ import { validateMovesWithRust } from '../lib/rustMoveValidate.js';
 import { resolveOnBestMoveResult } from '../lib/onBestMoveResult.js';
 import { positionKeyFromActions, resolveLiveBestMoveKey } from '../lib/liveBestMove.js';
 import { positionKeyFromHistory as remotePositionKey } from '../lib/remoteSync.js';
+import {
+  buildDiagnosticContext,
+  validateEngineMoveBeforeCommit,
+  filterTitaniumLegalMoves,
+  canonicalStateFromBoard,
+  assertPostWallInvariants,
+} from '../lib/canonicalState.js';
 import { isAbortError } from '../lib/engineAbort.js';
 import { AceV10JsEngineClient } from '../lib/aceV10JsEngine.js';
 import { AceV13JsEngineClient } from '../lib/aceV13JsEngine.js';
@@ -270,6 +277,7 @@ export class AppController {
     this._undoPauseTimer = null;
     this._playNowLock = false;
     this._terminalOverlayDismissed = false;
+    this._lastDiagnostic = null;
     this.migrateLegacyPlayerTypes();
     // First paint: Titanium vs local αβ adversary should not always be White.
     this.maybeRandomizeTitaniumAdversarySeats();
@@ -1294,7 +1302,13 @@ export class AppController {
           if (this.settings.players[seat] === PlayerType.Human) {
             continue;
           }
-          const message = err?.message ?? String(err);
+          const diagnostic = buildDiagnosticContext({
+          session: this.session,
+          settings: this.settings,
+          reason: 'remote-sync-failure',
+        });
+        this._lastDiagnostic = diagnostic;
+        const message = `${err?.message ?? String(err)}\n\n${diagnostic}`;
           this.engineErrors[seat] = message;
           this.engineStatus[seat] = 'error';
           const engine = this.getEngineForSeat(seat);
@@ -1753,23 +1767,27 @@ export class AppController {
     const illegalMsg = rustError
       ? String(rustError)
       : `REJECTED illegal move ${suggested} on ply ${ply} — board unchanged (${legal.length} legal)`;
-    const detail =
-      `position="${position}" engineHistory="${requestHistory ?? position}" requestSeq=${requestSeq} requestPly=${requestPly} retry=${retries}/${this._maxIllegalRetries}`;
+
+    const diagnostic = buildDiagnosticContext({
+      session: this.session,
+      settings: this.settings,
+      request: {
+        requestSeq,
+        gameGeneration: this._gameGeneration,
+        seatIndex,
+      },
+      move: suggested,
+      decodedMove: suggested,
+      reason: rustError ? 'titanium-illegal' : 'canonical-illegal',
+    });
+    this._lastDiagnostic = diagnostic;
 
     console.error('Engine produced illegal move', {
       playerType,
       seatIndex,
       suggested,
       ply,
-      position,
-      requestSeq,
-      requestPly,
-      retries,
-      playerToMove: snapshot.playerToMove,
-      playerPositions: snapshot.playerPositions,
-      wallsRemaining: snapshot.wallsRemaining,
-      legalCount: legal.length,
-      legalSample: legal.slice(0, 40),
+      diagnostic,
     });
 
     this.getEngineForSeat(seatIndex)?.clearQueuedSearches?.();
@@ -1779,9 +1797,9 @@ export class AppController {
       illegalMove: suggested,
       illegalMovePly: ply,
       legalMovesCount: legal.length,
-      illegalDetail: detail,
+      illegalDetail: diagnostic,
     };
-    this.engineErrors[seatIndex] = illegalMsg;
+    this.engineErrors[seatIndex] = `${illegalMsg}\n\n${diagnostic}`;
     this.engineStatus[seatIndex] = 'error';
 
     const budgetHint = describePlayerAiSettings(
@@ -1795,7 +1813,7 @@ export class AppController {
       move: suggested,
       engine: this.engineLabelForSeat(seatIndex),
       budget: budgetHint,
-      error: `${illegalMsg} | ${detail}`,
+      error: `${illegalMsg}\n\n${diagnostic}`,
       rejected: true,
       legalSample: legal.slice(0, 12).join(' '),
       stoppedBy: 'illegal',
@@ -1990,6 +2008,64 @@ export class AppController {
 
     const siBeforeMove = finalizeSearchInfo(this.searchInfoBySeat[seatIndex] ?? {});
 
+    const moveKey = toAlgebraic(action);
+    const canonicalLegalMoves = current.validActions.map((a) => toAlgebraic(a));
+    let titaniumLegalMoves = canonicalLegalMoves;
+    if (!useStaticEngineBackend()) {
+      const historyTokens = this.session.actions.map((a) => toAlgebraic(a));
+      titaniumLegalMoves = await filterTitaniumLegalMoves(historyTokens, canonicalLegalMoves);
+    }
+
+    const gate = validateEngineMoveBeforeCommit({
+      move: moveKey,
+      state: canonicalStateFromBoard(this.session.board),
+      request: {
+        requestSeq,
+        gameGeneration,
+        positionKey: requestPositionKey ?? currentPositionKey,
+        seatIndex,
+        sideToMove: requestPlayerToMove,
+        connectionEpoch,
+      },
+      current: {
+        requestSeq: this._moveRequestSeq,
+        gameGeneration: this._gameGeneration,
+        positionKey: currentPositionKey,
+        seatIndex: currentSeat,
+      },
+      canonicalLegalMoves,
+      titaniumLegalMoves,
+    });
+
+    if (!gate.ok) {
+      const diagnostic = buildDiagnosticContext({
+        session: this.session,
+        settings: this.settings,
+        request: {
+          requestSeq,
+          gameGeneration,
+          seatIndex,
+          connectionEpoch,
+        },
+        move: moveKey,
+        decodedMove: moveKey,
+        reason: gate.reason,
+        titaniumLegalMoves,
+      });
+      this._lastDiagnostic = diagnostic;
+      console.warn('Engine move rejected at gate', gate.reason, diagnostic);
+      if (this.thinkingSeatIndex === seatIndex) {
+        this.aiThinking = false;
+        this.thinkingPlayerType = null;
+        this.thinkingSeatIndex = null;
+        this.liveSearch = null;
+      }
+      this.engineErrors[seatIndex] = `REJECTED ${gate.reason} | ${diagnostic}`;
+      this.engineStatus[seatIndex] = 'error';
+      this.onChange?.();
+      return gate.reason;
+    }
+
     if (!this.isActionLegal(action)) {
       return this.rejectIllegalEngineMove({
         playerType,
@@ -2052,6 +2128,30 @@ export class AppController {
     this.thinkingSeatIndex = null;
     this.liveSearch = null;
     this.lmrVizLive = null;
+
+    if (isWallAction(action)) {
+      const trial = new QuoridorBoard();
+      for (const prior of this.session.actions) {
+        trial.takeAction(prior);
+      }
+      trial.takeAction(action);
+      const wallInv = assertPostWallInvariants(canonicalStateFromBoard(trial));
+      if (!wallInv.ok) {
+        const diagnostic = buildDiagnosticContext({
+          session: this.session,
+          settings: this.settings,
+          request: { requestSeq, gameGeneration, seatIndex },
+          move: moveKey,
+          reason: wallInv.reason,
+        });
+        this._lastDiagnostic = diagnostic;
+        this.engineErrors[seatIndex] = `REJECTED ${wallInv.reason}\n\n${diagnostic}`;
+        this.engineStatus[seatIndex] = 'error';
+        this.aiThinking = false;
+        this.onChange?.();
+        return wallInv.reason;
+      }
+    }
 
     this._suppressSessionNotify = true;
     const applied = this.session.applyAction(action);

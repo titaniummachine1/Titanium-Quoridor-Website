@@ -11,6 +11,13 @@
 import { toAlgebraic } from '../lib/gameLogic.js';
 import { openPlayerDialog } from './playerDialog.js';
 import { formatEngineScore } from '../lib/engineScore.js';
+import {
+  formatCanonicalGameLog,
+  canonicalStateFromBoard,
+  blockedEdgesFromCanonicalWalls,
+  legalMovesFromBoard,
+  positionKeyFromHistory,
+} from '../lib/canonicalState.js';
 
 function escHtml(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -61,9 +68,28 @@ function wireControls(container, state, controller) {
   });
 }
 
+function formatGameLogHeader(state) {
+  if (!state.board) {
+    return '';
+  }
+  const history = (state.actions ?? []).map((a) => toAlgebraic(a));
+  const canon = canonicalStateFromBoard(state.board);
+  const blockedEdges = blockedEdgesFromCanonicalWalls(canon);
+  const legalMoves = legalMovesFromBoard(state.board);
+  const positionKey = positionKeyFromHistory(state.actions ?? []);
+  return formatCanonicalGameLog({
+    history,
+    state: canon,
+    legalMoves,
+    positionKey,
+    blockedEdges,
+    isFlipped: state.settings?.rotateBoard ?? false,
+  });
+}
+
 function formatLogsText(state) {
+  const lines = [formatGameLogHeader(state)];
   const snaps = state.lastCompletedThinkBySeat ?? [];
-  const lines = [];
   const players = state.settings?.players ?? [];
   const errors = state.engineErrors ?? {};
 
