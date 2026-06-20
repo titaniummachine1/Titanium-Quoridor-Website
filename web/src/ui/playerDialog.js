@@ -130,7 +130,7 @@ export function openPlayerDialog(state, controller, { mode = 'newgame' } = {}) {
     '<div class="player-dialog" role="dialog" aria-modal="true">' +
       '<div class="player-dialog__header">' +
         '<h2 class="player-dialog__title">' + escHtml(title) + '</h2>' +
-        '<button class="player-dialog__close" aria-label="Close" data-action="close">✕</button>' +
+        '<button type="button" class="player-dialog__close" aria-label="Close" data-action="close">✕</button>' +
       '</div>' +
       '<div class="player-dialog__body">' +
         '<div class="player-dialog__hint">White starts at the bottom and moves upward. Black starts at the top and moves downward.</div>' +
@@ -144,10 +144,10 @@ export function openPlayerDialog(state, controller, { mode = 'newgame' } = {}) {
         '</div>' +
       '</div>' +
       '<div class="player-dialog__footer">' +
-        '<button class="btn btn--primary player-dialog__start" data-action="start">' +
+        '<button type="button" class="btn btn--primary player-dialog__start" data-action="start">' +
           (isNewGame ? 'Start game' : 'Apply') +
         '</button>' +
-        (!isNewGame ? '<button class="btn player-dialog__cancel" data-action="cancel">Cancel</button>' : '') +
+        (!isNewGame ? '<button type="button" class="btn player-dialog__cancel" data-action="cancel">Cancel</button>' : '') +
       '</div>' +
     '</div>';
 
@@ -170,8 +170,8 @@ export function openPlayerDialog(state, controller, { mode = 'newgame' } = {}) {
   wireEngineControls(overlay, 0, selections);
   wireEngineControls(overlay, 1, selections);
 
-  const confirm = () => { applyAndClose(); };
-  const cancel  = () => { overlay.remove(); currentDialog = null; };
+  const confirmDialog = () => { applyAndClose(); };
+  const cancelDialog = () => { overlay.remove(); currentDialog = null; };
 
   function applyAndClose() {
     savePrefs({
@@ -188,16 +188,16 @@ export function openPlayerDialog(state, controller, { mode = 'newgame' } = {}) {
     currentDialog = null;
   }
 
-  overlay.querySelector('[data-action="start"]')?.addEventListener('click', confirm);
-  overlay.querySelector('[data-action="close"]')?.addEventListener('click', confirm);
-  overlay.querySelector('[data-action="cancel"]')?.addEventListener('click', cancel);
+  overlay.querySelector('[data-action="start"]')?.addEventListener('click', confirmDialog);
+  overlay.querySelector('[data-action="close"]')?.addEventListener('click', cancelDialog);
+  overlay.querySelector('[data-action="cancel"]')?.addEventListener('click', cancelDialog);
 
   overlay.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter')  { e.preventDefault(); confirm(); }
-    if (e.key === 'Escape') { e.preventDefault(); confirm(); }
+    if (e.key === 'Enter')  { e.preventDefault(); confirmDialog(); }
+    if (e.key === 'Escape') { e.preventDefault(); cancelDialog(); }
   });
 
-  overlay.addEventListener('pointerdown', (e) => { if (e.target === overlay) confirm(); });
+  overlay.addEventListener('pointerdown', (e) => { if (e.target === overlay) cancelDialog(); });
 }
 
 // ── Rendering ────────────────────────────────────────────────────────────────

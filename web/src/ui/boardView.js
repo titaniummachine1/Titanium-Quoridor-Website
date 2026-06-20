@@ -150,12 +150,12 @@ export function renderBoard(container, state, controller) {
     grid,
   );
 
-  if (isDraw) {
+  if (isDraw && !state.terminalOverlayDismissed) {
     boardShell.appendChild(renderTerminalOverlay(
       'Draw — threefold repetition',
       controller,
     ));
-  } else if (winner) {
+  } else if (winner && !state.terminalOverlayDismissed) {
     boardShell.appendChild(renderTerminalOverlay(
       `${playerColorName(winner)} wins!`,
       controller,
@@ -275,13 +275,37 @@ function wireBoardPointerInput(boardShell, { canInteract, controller }) {
 function renderTerminalOverlay(message, controller) {
   const banner = document.createElement('div');
   banner.className = 'winner-banner board-terminal-overlay';
+  banner.setAttribute('role', 'dialog');
+  banner.setAttribute('aria-modal', 'true');
+
+  const closeBtn = document.createElement('button');
+  closeBtn.type = 'button';
+  closeBtn.className = 'board-terminal-overlay__close';
+  closeBtn.setAttribute('aria-label', 'Close');
+  closeBtn.textContent = '✕';
+
   const msg = document.createElement('span');
   msg.textContent = message;
+
   const btn = document.createElement('button');
+  btn.type = 'button';
   btn.className = 'btn btn--primary winner-banner__newgame';
   btn.textContent = 'New game';
   btn.addEventListener('click', () => controller._openPlayerDialog?.({ mode: 'newgame' }));
-  banner.append(msg, btn);
+
+  const cancelDialog = () => controller.dismissTerminalOverlay?.();
+
+  closeBtn.addEventListener('click', cancelDialog);
+  banner.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      cancelDialog();
+    }
+  });
+  banner.tabIndex = -1;
+  setTimeout(() => banner.focus(), 0);
+
+  banner.append(closeBtn, msg, btn);
   return banner;
 }
 
