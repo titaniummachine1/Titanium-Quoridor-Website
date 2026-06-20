@@ -8,18 +8,25 @@ import { EngineClient } from '../lib/engineClient.js';
 import { GorisansonEngineClient, TitaniumEngineClient } from '../lib/localMctsEngine.js';
 import { TitaniumWasmEngineClient } from '../lib/titaniumWasmClient.js';
 import { useStaticEngineBackend } from '../lib/engineBackend.js';
-import { validateMovesWithRust } from '../lib/rustMoveValidate.js';
 import { resolveOnBestMoveResult } from '../lib/onBestMoveResult.js';
 import { positionKeyFromActions, resolveLiveBestMoveKey } from '../lib/liveBestMove.js';
-import { positionKeyFromHistory as remotePositionKey } from '../lib/remoteSync.js';
+import { positionKeyFromHistory as historyPositionKey } from '../lib/remoteSync.js';
 import {
   buildDiagnosticContext,
   validateEngineMoveBeforeCommit,
-  filterTitaniumLegalMoves,
   canonicalStateFromBoard,
+  canonicalPositionKeyFromBoard,
   assertPostWallInvariants,
 } from '../lib/canonicalState.js';
+import { TitaniumLegalityOracle } from '../lib/titaniumLegalityOracle.js';
+import { createTitaniumLegalityRuntime } from '../lib/titaniumLegalityRuntime.js';
+import { validateMoveLegality } from '../lib/validateMoveLegality.js';
 import { isAbortError } from '../lib/engineAbort.js';
+import { getEngineEntryForPlayer } from '../engines/engineRegistry.js';
+import { requestEngineMove } from '../engines/requestEngineMove.js';
+import { validateEngineResultIdentity } from '../engines/validateEngineResultIdentity.js';
+import { logAiRequestEvent } from '../engines/aiRequestLog.js';
+import { EngineBackendKind } from '../engines/engineBackend.js';
 import { AceV10JsEngineClient } from '../lib/aceV10JsEngine.js';
 import { AceV13JsEngineClient } from '../lib/aceV13JsEngine.js';
 import { AceRustWasmEngineClient } from '../lib/aceRustWasmClient.js';
@@ -278,6 +285,12 @@ export class AppController {
     this._playNowLock = false;
     this._terminalOverlayDismissed = false;
     this._lastDiagnostic = null;
+    this.startupConfirmed = false;
+    this._activeAiAbort = null;
+    this.titaniumLegalityOracle = new TitaniumLegalityOracle({
+      createRuntime: createTitaniumLegalityRuntime,
+    });
+    this.legalityOracleState = { ready: false, error: null };
     this.migrateLegacyPlayerTypes();
     // First paint: Titanium vs local αβ adversary should not always be White.
     this.maybeRandomizeTitaniumAdversarySeats();
@@ -307,7 +320,7 @@ export class AppController {
       liveSearch: this.liveSearch,
       aiThinking: this.aiThinking,
       searchGeneration: this._activeSearchSeq,
-      positionKey: this.catMovesKey(),
+      positionKey: this.currentPositionKey(),
       strengthLevelPresets: STRENGTH_LEVEL_PRESETS,
       timeToMovePresets: TIME_TO_MOVE_PRESETS,
       playerOptionGroups: getPlayerOptionGroups(),
@@ -357,6 +370,7 @@ export class AppController {
         }
         : null,
       terminalOverlayDismissed: this._terminalOverlayDismissed,
+      legalityOracleState: { ...this.legalityOracleState },
       playReplayCode:
         this.session.actions.length > 0 && this.settings.uiMode === 'play'
           ? encodeReplayFromActions(
@@ -440,6 +454,10 @@ export class AppController {
   }
 
   _cancelActiveAiSearch() {
+    if (this._activeAiAbort) {
+      this._activeAiAbort.abort();
+      this._activeAiAbort = null;
+    }
     const seat = this.thinkingSeatIndex;
     if (seat != null) {
       this.getEngineForSeat(seat)?.cancelSearch?.();
@@ -990,6 +1008,41 @@ export class AppController {
     return this.session.actions.map((action) => toAlgebraic(action)).join('|');
   }
 
+  currentPositionKey() {
+    return canonicalPositionKeyFromBoard(this.session.board);
+  }
+
+  confirmStartup() {
+    this.startupConfirmed = true;
+  }
+
+  async initializeLegalityOracle() {
+    try {
+      await this.titaniumLegalityOracle.ensureReady();
+      this.legalityOracleState = { ready: true, error: null };
+    } catch (error) {
+      this.legalityOracleState = { ready: false, error };
+    }
+    this.onChange?.();
+    return this.legalityOracleState;
+  }
+
+  hasAiPlayerSelected(players = this.settings.players) {
+    return players.some((playerType) => playerType !== PlayerType.Human);
+  }
+
+  assertLegalityOracleReady(players = this.settings.players) {
+    if (!this.hasAiPlayerSelected(players)) {
+      return true;
+    }
+    if (this.legalityOracleState.ready) {
+      return true;
+    }
+    const message = this.legalityOracleState.error?.message
+      ?? 'Titanium legality oracle is not ready';
+    throw new Error(message);
+  }
+
   invalidateCatCache() {
     this._catMovesKey = null;
   }
@@ -1297,7 +1350,7 @@ export class AppController {
           return;
         }
         console.error('Engine position sync failed after ply', err);
-        const positionKey = remotePositionKey(this.session.actions);
+        const positionKey = this.currentPositionKey();
         for (let seat = 0; seat < this.settings.players.length; seat++) {
           if (this.settings.players[seat] === PlayerType.Human) {
             continue;
@@ -1497,7 +1550,7 @@ export class AppController {
             seatIndex,
             playerLabel: this.engineLabelForSeat(seatIndex),
             requestSeq: this._activeSearchSeq,
-            positionKey: this.catMovesKey(),
+            positionKey: this.currentPositionKey(),
             pv: livePv,
             simulations: si.simulations ?? 0,
             nodes: si.nodes ?? 0,
@@ -1624,28 +1677,27 @@ export class AppController {
     return this.getEngineForSeat(this.seatIndexForPlayerType(playerType));
   }
 
-  /** Keep engine clients in sync after every ply (incremental makemove echo to all remotes). */
+  /** Keep remote engine clients in sync after every ply (incremental makemove echo). */
   async syncRemoteEnginesAfterMove(action) {
-    const positionKey = remotePositionKey(this.session.actions);
+    const positionKey = this.currentPositionKey();
     const historyLength = this.session.actions.length;
     const ops = [];
     for (let seat = 0; seat < this.settings.players.length; seat++) {
-      if (this.settings.players[seat] === PlayerType.Human) {
+      const playerType = this.settings.players[seat];
+      if (playerType === PlayerType.Human) {
+        continue;
+      }
+      const engineEntry = getEngineEntryForPlayer(
+        playerType,
+        this.settings.playerAiSettings[seat],
+      );
+      if (!engineEntry || engineEntry.backend !== EngineBackendKind.REMOTE_WS) {
         continue;
       }
       const engine = this.getEngineForSeat(seat);
       const echo = engine?.echoCommittedMove?.(action, positionKey, historyLength);
       if (echo?.then) {
         ops.push(echo);
-      } else if (engine?.makeMoves) {
-        ops.push(
-          Promise.resolve(engine.makeMoves([action])).then(() => {
-            if (engine.appliedPlies != null) {
-              engine.appliedPlies = historyLength;
-              engine.appliedPositionKey = positionKey;
-            }
-          }),
-        );
       }
     }
     if (ops.length) {
@@ -1660,7 +1712,7 @@ export class AppController {
     }
 
     const moveHistory = this.session.actions;
-    const positionKey = remotePositionKey(moveHistory);
+    const positionKey = this.currentPositionKey();
     engine.syncGameState({
       moveHistory,
       gameSnapshot: this.session.getEngineSnapshot(),
@@ -1833,7 +1885,7 @@ export class AppController {
     if (retries <= this._maxIllegalRetries) {
       const engine = this.getEngineForSeat(seatIndex);
       if (engine?.recoverFromDesync) {
-        const positionKey = remotePositionKey(this.session.actions);
+        const positionKey = this.currentPositionKey();
         void engine.recoverFromDesync({
           moveHistory: this.session.actions,
           gameSnapshot: this.session.getEngineSnapshot(),
@@ -1967,34 +2019,71 @@ export class AppController {
     connectionEpoch,
     gameGeneration,
     engine,
+    validationSignal = null,
   }) {
+    const moveKey = toAlgebraic(action);
     const current = this.session.getSnapshot();
     const currentSeat = current.playerToMove - 1;
     const currentPlayerType = this.settings.players[currentSeat];
-    const currentPositionKey = remotePositionKey(current.actions);
-    const stale =
-      gameGeneration !== this._gameGeneration ||
-      requestSeq !== this._moveRequestSeq ||
+    const currentPositionKey = this.currentPositionKey();
+    const aiSettings =
+      this._thinkAiSettings ?? this.settings.playerAiSettings[seatIndex] ?? {};
+    const engineEntry = getEngineEntryForPlayer(playerType, aiSettings);
+
+    logAiRequestEvent('AI_FINAL_RESULT_RECEIVED', {
+      requestSeq,
+      gameGeneration,
+      seatIndex,
+      sideToMove: requestPlayerToMove,
+      engineId: playerType,
+      backend: engineEntry?.backend,
+      positionKey: requestPositionKey ?? currentPositionKey,
+      connectionEpoch: engineEntry?.backend === EngineBackendKind.REMOTE_WS
+        ? connectionEpoch
+        : undefined,
+      raw: moveKey,
+    });
+
+    const identity = validateEngineResultIdentity({
+      engineEntry,
+      resultContext: {
+        requestSeq,
+        gameGeneration,
+        positionKey: requestPositionKey ?? currentPositionKey,
+        seatIndex,
+        sideToMove: requestPlayerToMove,
+        engineId: playerType,
+        connectionEpoch,
+      },
+      currentContext: {
+        requestSeq: this._moveRequestSeq,
+        gameGeneration: this._gameGeneration,
+        positionKey: currentPositionKey,
+        seatIndex: currentSeat,
+        sideToMove: current.playerToMove,
+        engineId: currentPlayerType,
+        connectionEpoch: engine?.connectionEpoch,
+        syncState: engine?.syncState ?? 'SYNCED',
+      },
+    });
+
+    const plyMismatch =
       current.actions.length !== requestPly ||
-      current.playerToMove !== requestPlayerToMove ||
-      currentSeat !== seatIndex ||
-      currentPlayerType !== playerType ||
-      (requestPositionKey != null && requestPositionKey !== currentPositionKey) ||
-      (connectionEpoch != null &&
-        engine?.connectionEpoch != null &&
-        connectionEpoch !== engine.connectionEpoch);
-    if (stale) {
+      current.playerToMove !== requestPlayerToMove;
+
+    if (!identity.ok || plyMismatch) {
+      logAiRequestEvent('AI_IDENTITY_VALIDATED', {
+        requestSeq,
+        ok: false,
+        reason: plyMismatch ? 'stale-ply' : identity.reason,
+        decodedMove: moveKey,
+      });
       console.warn('Ignoring stale engine move response', {
         playerType,
         seatIndex,
         requestSeq,
-        currentSeq: this._moveRequestSeq,
-        requestPly,
-        currentPly: current.actions.length,
-        requestPlayerToMove,
-        currentPlayerToMove: current.playerToMove,
-        currentPlayerType,
-        suggested: this.session.actionToLabel(action),
+        reason: identity.reason,
+        suggested: moveKey,
       });
       if (this.thinkingSeatIndex === seatIndex) {
         this.aiThinking = false;
@@ -2006,17 +2095,18 @@ export class AppController {
       return 'stale';
     }
 
+    logAiRequestEvent('AI_IDENTITY_VALIDATED', {
+      requestSeq,
+      ok: true,
+      decodedMove: moveKey,
+    });
+
     const siBeforeMove = finalizeSearchInfo(this.searchInfoBySeat[seatIndex] ?? {});
 
-    const moveKey = toAlgebraic(action);
     const canonicalLegalMoves = current.validActions.map((a) => toAlgebraic(a));
-    let titaniumLegalMoves = canonicalLegalMoves;
-    if (!useStaticEngineBackend()) {
-      const historyTokens = this.session.actions.map((a) => toAlgebraic(a));
-      titaniumLegalMoves = await filterTitaniumLegalMoves(historyTokens, canonicalLegalMoves);
-    }
+    const historyTokens = this.session.actions.map((a) => toAlgebraic(a));
 
-    const gate = validateEngineMoveBeforeCommit({
+    const identityGate = validateEngineMoveBeforeCommit({
       move: moveKey,
       state: canonicalStateFromBoard(this.session.board),
       request: {
@@ -2034,10 +2124,43 @@ export class AppController {
         seatIndex: currentSeat,
       },
       canonicalLegalMoves,
-      titaniumLegalMoves,
     });
 
-    if (!gate.ok) {
+    if (!identityGate.ok) {
+      logAiRequestEvent('AI_LEGALITY_VALIDATED', {
+        requestSeq,
+        ok: false,
+        reason: identityGate.reason,
+        decodedMove: moveKey,
+      });
+      if (this.thinkingSeatIndex === seatIndex) {
+        this.aiThinking = false;
+        this.thinkingPlayerType = null;
+        this.thinkingSeatIndex = null;
+        this.liveSearch = null;
+      }
+      this.engineErrors[seatIndex] = `REJECTED ${identityGate.reason}`;
+      this.engineStatus[seatIndex] = 'error';
+      this.onChange?.();
+      return identityGate.reason;
+    }
+
+    const legality = await validateMoveLegality({
+      move: moveKey,
+      canonicalLegalMoves,
+      titaniumOracle: this.titaniumLegalityOracle,
+      historyTokens,
+      positionKey: currentPositionKey,
+      signal: validationSignal ?? undefined,
+    });
+
+    if (!legality.ok) {
+      logAiRequestEvent('AI_LEGALITY_VALIDATED', {
+        requestSeq,
+        ok: false,
+        reason: legality.reason,
+        decodedMove: moveKey,
+      });
       const diagnostic = buildDiagnosticContext({
         session: this.session,
         settings: this.settings,
@@ -2049,22 +2172,35 @@ export class AppController {
         },
         move: moveKey,
         decodedMove: moveKey,
-        reason: gate.reason,
-        titaniumLegalMoves,
+        reason: legality.reason,
+        titaniumResult: legality.titanium,
+        oracleState: this.legalityOracleState,
       });
       this._lastDiagnostic = diagnostic;
-      console.warn('Engine move rejected at gate', gate.reason, diagnostic);
+      console.warn('Engine move rejected at gate', legality.reason, diagnostic);
       if (this.thinkingSeatIndex === seatIndex) {
         this.aiThinking = false;
         this.thinkingPlayerType = null;
         this.thinkingSeatIndex = null;
         this.liveSearch = null;
       }
-      this.engineErrors[seatIndex] = `REJECTED ${gate.reason} | ${diagnostic}`;
+      const oracleMsg =
+        legality.reason === 'titanium-oracle-unavailable'
+          ? `Local legality checker unavailable: ${legality.titanium?.error?.message ?? 'unknown error'}`
+          : legality.reason === 'titanium-position-invalid'
+            ? `Titanium rejected position: ${legality.titanium?.error?.message ?? 'invalid'}`
+            : `REJECTED ${legality.reason}`;
+      this.engineErrors[seatIndex] = `${oracleMsg}\n\n${diagnostic}`;
       this.engineStatus[seatIndex] = 'error';
       this.onChange?.();
-      return gate.reason;
+      return legality.reason;
     }
+
+    logAiRequestEvent('AI_LEGALITY_VALIDATED', {
+      requestSeq,
+      ok: true,
+      decodedMove: moveKey,
+    });
 
     if (!this.isActionLegal(action)) {
       return this.rejectIllegalEngineMove({
@@ -2076,26 +2212,6 @@ export class AppController {
         requestHistory,
         searchInfo: siBeforeMove,
       });
-    }
-
-    if (!useStaticEngineBackend()) {
-      const trialMoves = [
-        ...this.session.actions.map((a) => toAlgebraic(a)),
-        toAlgebraic(action),
-      ];
-      const rust = await validateMovesWithRust(trialMoves);
-      if (!rust.ok) {
-        return this.rejectIllegalEngineMove({
-          playerType,
-          seatIndex,
-          action,
-          requestSeq,
-          requestPly,
-          requestHistory,
-          searchInfo: siBeforeMove,
-          rustError: rust.error,
-        });
-      }
     }
 
     const posKeyBeforeMove = this.session.actions.map((a) => toAlgebraic(a)).join('|');
@@ -2220,12 +2336,22 @@ export class AppController {
 
     this.engineErrors[seatIndex] = null;
     this.engineStatus[seatIndex] = 'idle';
+    logAiRequestEvent('AI_MOVE_COMMITTED', {
+      requestSeq,
+      gameGeneration,
+      seatIndex,
+      decodedMove: moveKey,
+    });
     this.onChange?.();
     this.continueAiAfterEngineSync(action);
+    logAiRequestEvent('AI_REQUEST_FINALLY', { requestSeq, seatIndex });
     return true;
   }
 
   maybeRequestAiMove() {
+    if (!this.startupConfirmed) {
+      return;
+    }
     if (this._undoPaused) {
       return; // Waiting for undo pause to expire
     }
@@ -2263,7 +2389,29 @@ export class AppController {
     const requestPly = requestSnapshot.actions.length;
     const requestPlayerToMove = requestSnapshot.playerToMove;
     const requestHistory = this.session.actions.map((a) => toAlgebraic(a)).join(' ');
-    const requestPositionKey = remotePositionKey(this.session.actions);
+    const requestPositionKey = this.currentPositionKey();
+
+    const playerIndex = requestPlayerToMove - 1;
+    let aiSettings = this.settings.playerAiSettings[playerIndex];
+    if (!aiSettings) {
+      aiSettings = defaultPlayerAiSettings(playerType, this.engineConfigs);
+      this.settings.playerAiSettings[playerIndex] = aiSettings;
+    }
+    const engineEntry = getEngineEntryForPlayer(playerType, aiSettings);
+    if (!engineEntry) {
+      this.aiThinking = false;
+      return;
+    }
+
+    logAiRequestEvent('AI_REQUEST_ENTER', {
+      requestSeq,
+      gameGeneration: this._gameGeneration,
+      seatIndex,
+      sideToMove: requestPlayerToMove,
+      engineId: playerType,
+      backend: engineEntry.backend,
+      positionKey: requestPositionKey,
+    });
 
     this.aiThinking = true;
     this.thinkingPlayerType = playerType;
@@ -2279,7 +2427,7 @@ export class AppController {
       mode: 'searching',
       depthLog: [],
       requestSeq,
-      positionKey: this.catMovesKey(),
+      positionKey: requestPositionKey,
     };
     this.lmrVizLive = null;
     if (this.settings.showLmrVision && isTitaniumEngine(playerType, this.engineConfigs)) {
@@ -2288,6 +2436,25 @@ export class AppController {
     this.onChange?.();
 
     const gameGeneration = this._gameGeneration;
+    const moveHistory = this.session.actions;
+    const isFreshGame = moveHistory.length === 0;
+    this._thinkAiSettings = { ...aiSettings };
+
+    if (this._activeAiAbort) {
+      this._activeAiAbort.abort();
+    }
+    const abortController = new AbortController();
+    this._activeAiAbort = abortController;
+    const capturedSignal = abortController.signal;
+
+    logAiRequestEvent('AI_CONTROLLER_FOUND', {
+      requestSeq,
+      engineId: playerType,
+      backend: engineEntry.backend,
+    });
+    logAiRequestEvent('AI_BACKEND_SELECTED', { requestSeq, backend: engineEntry.backend });
+    logAiRequestEvent('AI_REQUEST_STARTED', { requestSeq, positionKey: requestPositionKey });
+
     engine.onBestMove = (action, _raw, meta) =>
       resolveOnBestMoveResult(
         engine,
@@ -2303,6 +2470,10 @@ export class AppController {
           connectionEpoch: meta?.connectionEpoch,
           gameGeneration,
           engine,
+        }).finally(() => {
+          if (this._activeAiAbort === abortController) {
+            this._activeAiAbort = null;
+          }
         }),
       );
 
@@ -2321,30 +2492,35 @@ export class AppController {
         error: err,
         budget: describePlayerAiSettings(
           playerType,
-          this._thinkAiSettings ?? this.settings.playerAiSettings[seatIndex],
+          this._thinkAiSettings ?? aiSettings,
           this.engineConfigs,
         ),
       });
       this.onChange?.();
     };
 
-    const playerIndex = requestPlayerToMove - 1;
-    let aiSettings = this.settings.playerAiSettings[playerIndex];
-    if (!aiSettings) {
-      aiSettings = defaultPlayerAiSettings(playerType, this.engineConfigs);
-      this.settings.playerAiSettings[playerIndex] = aiSettings;
-    }
-    const moveHistory = this.session.actions;
-    const isFreshGame = moveHistory.length === 0;
-    this._thinkAiSettings = { ...aiSettings };
-
-    engine.requestMove({
-      aiSettings,
-      gameSnapshot: this.session.getEngineSnapshot(),
-      moveHistory,
-      isFreshGame,
-      positionKey: requestPositionKey,
-      requestSeq,
+    void requestEngineMove({
+      engineEntry,
+      controller: engine,
+      request: {
+        history: moveHistory,
+        sideToMove: requestPlayerToMove,
+        aiSettings,
+        signal: capturedSignal,
+        gameSnapshot: this.session.getEngineSnapshot(),
+        isFreshGame,
+        positionKey: requestPositionKey,
+        requestSeq,
+        gameGeneration,
+      },
+    }).catch((err) => {
+      if (capturedSignal.aborted || isAbortError(err)) {
+        return;
+      }
+      if (gameGeneration !== this._gameGeneration || requestSeq !== this._moveRequestSeq) {
+        return;
+      }
+      engine.onError?.(err);
     });
   }
 
@@ -2368,6 +2544,17 @@ export class AppController {
         }
       }
     }
+    try {
+      this.assertLegalityOracleReady(this.settings.players);
+    } catch (error) {
+      this.engineErrors = {
+        0: error.message,
+        1: error.message,
+      };
+      this.onChange?.();
+      return;
+    }
+    this.confirmStartup();
     this.persistPlaySettings();
     this.newGame();
   }
@@ -2470,17 +2657,23 @@ export class AppController {
       return;
     }
 
+    if (!snapshot.validActions.some((mv) => toAlgebraic(mv) === bestAlgebraic)) {
+      return;
+    }
+
     const playerType = this.settings.players[seatIndex];
     const requestPly = snapshot.actions.length;
     const requestPlayerToMove = snapshot.playerToMove;
     const requestHistory = snapshot.actions.map((a) => toAlgebraic(a)).join(' ');
-    const requestPositionKey = remotePositionKey(snapshot.actions);
+    const requestPositionKey = this.currentPositionKey();
     const gameGeneration = this._gameGeneration;
     const engine = this.getEngineForSeat(seatIndex);
+    const requestSeq = this._moveRequestSeq;
 
     this._playNowLock = true;
     this._cancelActiveAiSearch();
-    const requestSeq = this._moveRequestSeq;
+
+    const validationController = new AbortController();
 
     void this.applyEngineMove({
       action,
@@ -2493,6 +2686,7 @@ export class AppController {
       requestPositionKey,
       gameGeneration,
       engine,
+      validationSignal: validationController.signal,
     }).finally(() => {
       this._playNowLock = false;
     });

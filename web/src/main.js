@@ -105,7 +105,13 @@ function render() {
 
   updateNotationBar(notationSlot, state, controller);
 
-  lastTerminal = !!(state.winner != null || state.isDraw);
+  var isTerminal = !!(state.winner != null || state.isDraw);
+  if (isTerminal && !lastTerminal && !state.terminalOverlayDismissed) {
+    setTimeout(function() {
+      openPlayerDialog(controller.getState(), controller, { mode: 'newgame' });
+    }, 180);
+  }
+  lastTerminal = isTerminal;
 }
 
 function renderLiveUpdate() {
@@ -121,6 +127,8 @@ function renderLiveUpdate() {
 
 controller.onChange = render;
 controller.onLiveUpdate = renderLiveUpdate;
+
+void controller.initializeLegalityOracle();
 
 renderGameControls(controlsSlot, controller.getState(), controller);
 render();

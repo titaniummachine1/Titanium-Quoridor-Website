@@ -15,6 +15,20 @@ import { LOCAL_VISITS_RANGE, clampVisits, uctFromStrengthLevel } from './timeCon
 const SESSION_URL = '/api/titanium/session';
 const GENMOVE_URL = '/api/titanium/genmove';
 
+function formatEngineHttpError(data, status) {
+  if (data?.error == null) {
+    return `HTTP ${status}`;
+  }
+  if (typeof data.error === 'string') {
+    return data.error;
+  }
+  try {
+    return JSON.stringify(data.error);
+  } catch {
+    return String(data.error);
+  }
+}
+
 const AB_ENGINE_MODES = new Set([
   'minimax',
   'titanium-v15',
@@ -124,7 +138,7 @@ export class TitaniumEngineClient {
     });
     if (!res.ok && !stream) {
       const data = await res.json().catch(() => ({}));
-      throw new Error(data.error ?? `HTTP ${res.status}`);
+      throw new Error(formatEngineHttpError(data, res.status));
     }
     return res;
   }
@@ -251,7 +265,7 @@ export class TitaniumEngineClient {
         }
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
-          throw new Error(data.error ?? `HTTP ${res.status}`);
+          throw new Error(formatEngineHttpError(data, res.status));
         }
         return this.consumeSearchStream(res, searchCtx);
       })
@@ -299,7 +313,7 @@ export class TitaniumEngineClient {
         }
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
-          throw new Error(data.error ?? `HTTP ${res.status}`);
+          throw new Error(formatEngineHttpError(data, res.status));
         }
         return this.consumeSearchStream(res, searchCtx);
       })
@@ -411,7 +425,7 @@ export class TitaniumEngineClient {
         }
 
         if (data.type === 'error') {
-          throw new Error(data.error);
+          throw new Error(formatEngineHttpError(data, res.status));
         }
 
         if (data.type === 'bestmove') {

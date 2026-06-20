@@ -104,6 +104,48 @@ function savePrefs(prefs) {
   try { localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)); } catch {}
 }
 
+function aiSelected(players) {
+  return players.some((playerType) => playerType !== PlayerType.Human);
+}
+
+function oracleBlocksStart(state, selections) {
+  if (!aiSelected(selections.players)) {
+    return false;
+  }
+  return !state.legalityOracleState?.ready;
+}
+
+function oracleStatusHtml(state, selections) {
+  if (!aiSelected(selections.players)) {
+    return '';
+  }
+  if (state.legalityOracleState?.ready) {
+    return '';
+  }
+  if (state.legalityOracleState?.error) {
+    return (
+      '<div class="player-dialog__hint player-dialog__hint--error">' +
+      'Local legality checker failed to load. Check the copied diagnostic.' +
+      '</div>'
+    );
+  }
+  return (
+    '<div class="player-dialog__hint">Preparing local legality checker…</div>'
+  );
+}
+
+function updateStartButtonState(overlay, state, selections) {
+  const startBtn = overlay.querySelector('[data-action="start"]');
+  if (!startBtn) {
+    return;
+  }
+  const blocked = oracleBlocksStart(state, selections);
+  startBtn.disabled = blocked;
+  startBtn.title = blocked
+    ? 'Waiting for local legality checker'
+    : '';
+}
+
 // ── Dialog state ─────────────────────────────────────────────────────────────
 
 let currentDialog = null;
@@ -112,7 +154,12 @@ export function openPlayerDialog(state, controller, { mode = 'newgame' } = {}) {
   if (currentDialog) { currentDialog.remove(); currentDialog = null; }
 
   const isNewGame = mode === 'newgame';
-  const title = isNewGame ? 'New game — choose players' : 'Change players';
+  const isSettings = mode === 'settings';
+  const title = isNewGame
+    ? 'New game — choose players'
+    : isSettings
+      ? 'Settings'
+      : 'Change players';
 
   const prefs = loadPrefs(state);
   const selections = {
@@ -136,6 +183,7 @@ export function openPlayerDialog(state, controller, { mode = 'newgame' } = {}) {
         '<div class="player-dialog__hint">White starts at the bottom and moves upward. Black starts at the top and moves downward.</div>' +
         renderSeatSection(0, selections, groups) +
         renderSeatSection(1, selections, groups) +
+        oracleStatusHtml(state, selections) +
         '<div class="player-dialog__options">' +
           '<label class="player-dialog__option-row">' +
             '<input type="checkbox" data-option="bestMoveHint"' + (state.settings?.showBestMoveHint !== false ? ' checked' : '') + '>' +
@@ -145,7 +193,7 @@ export function openPlayerDialog(state, controller, { mode = 'newgame' } = {}) {
       '</div>' +
       '<div class="player-dialog__footer">' +
         '<button type="button" class="btn btn--primary player-dialog__start" data-action="start">' +
-          (isNewGame ? 'Start game' : 'Apply') +
+          (isNewGame ? 'Start game' : isSettings ? 'Apply settings' : 'Apply') +
         '</button>' +
         (!isNewGame ? '<button type="button" class="btn player-dialog__cancel" data-action="cancel">Cancel</button>' : '') +
       '</div>' +
@@ -153,6 +201,7 @@ export function openPlayerDialog(state, controller, { mode = 'newgame' } = {}) {
 
   document.body.appendChild(overlay);
   currentDialog = overlay;
+  updateStartButtonState(overlay, state, selections);
 
   setTimeout(() => overlay.querySelector('[data-action="start"]')?.focus(), 50);
 
@@ -174,6 +223,10 @@ export function openPlayerDialog(state, controller, { mode = 'newgame' } = {}) {
   const cancelDialog = () => { overlay.remove(); currentDialog = null; };
 
   function applyAndClose() {
+    if (oracleBlocksStart(state, selections)) {
+      updateStartButtonState(overlay, controller.getState(), selections);
+      return;
+    }
     savePrefs({
       players:     selections.players,
       wallClock:   selections.wallClock,
