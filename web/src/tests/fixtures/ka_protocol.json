@@ -1,0 +1,15 @@
+{
+  "engine": "ka-ai",
+  "uri": "wss://quoridor-ai.com/ka",
+  "description": "Sanitized Ka WebSocket frames (no secrets beyond public auth token shape)",
+  "frames": {
+    "clientAuth": "{\"token\":\"rbt_token_*\",\"version\":\"0.0.0\"}",
+    "clientSetoptionVisits": "setoption name visits value 1000",
+    "clientSetpositionStart": "setposition  /  / e2 e8 / 10 10 / 1",
+    "clientMakemove": "makemove e3",
+    "clientGo": "go",
+    "clientStop": "stop",
+    "serverInfo": "info depth 3 score 0.62 visits 120 pv e3 e4",
+    "serverBestmove": "bestmove e3"
+  }
+}

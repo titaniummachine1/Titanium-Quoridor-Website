@@ -1,0 +1,20 @@
+{
+  "engine": "ishtar-v3-ai",
+  "uri": "wss://quoridor-ai.com/ishtar-v3",
+  "description": "Sanitized Ishtar WebSocket frames — Glendenning walls on makemove only",
+  "frames": {
+    "clientAuth": "{\"token\":\"rbt_token_*\",\"version\":\"0.0.0\"}",
+    "clientSetoptionVisits": "setoption name visits value 3200",
+    "clientSetoptionParallelism": "setoption name parallelism value 32",
+    "clientSetpositionStart": "setposition  /  / e2 e8 / 10 10 / 1",
+    "clientMakemoveWallIncremental": "makemove f4h",
+    "clientGo": "go",
+    "clientStop": "stop",
+    "serverInfo": "info depth 2 score 0.55 visits 80 pv f4h e3",
+    "serverBestmoveWall": "bestmove f4h"
+  },
+  "notes": {
+    "incrementalWall": "Official f3h encodes as f4h on makemove/bestmove (row +1)",
+    "setposition": "Full setposition uses buildPositionString Glendenning flip for all coordinates"
+  }
+}
