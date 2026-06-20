@@ -1997,10 +1997,36 @@ body {
   padding: 4px 0;
 }
 
+.game-controls__btn,
 .game-controls .btn--small {
   flex: 1;
   min-width: 60px;
   text-align: center;
+  box-sizing: border-box;
+  height: 32px;
+  padding: 5px 10px;
+  font-size: 0.78rem;
+  line-height: 1.2;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.board-terminal-overlay__close {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  background: transparent;
+  border: none;
+  color: white;
+  font-size: 1.2rem;
+  cursor: pointer;
+  line-height: 1;
+  padding: 4px 8px;
+}
+
+.board-terminal-overlay__close:hover {
+  opacity: 0.85;
 }
 
 .undo-pause-banner {

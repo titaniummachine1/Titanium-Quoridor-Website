@@ -22,12 +22,12 @@ export function renderGameControls(container, state, controller) {
 
   container.innerHTML = `
     <div class="game-controls">
-      <button class="btn btn--small" data-action="new-game" title="Start a new game">New game</button>
-      <button class="btn btn--small" data-action="undo" ${canUndo ? '' : 'disabled'} title="Undo last move">Undo</button>
-      <button class="btn btn--small" data-action="flip" title="Flip board orientation">Flip</button>
-      <button class="btn btn--small" data-action="logs" title="Show AI thinking log for last move">Logs</button>
-      <button class="btn btn--small" data-action="load-notation" title="Load game from notation">Load</button>
-      <button class="btn btn--small" data-action="change-players" title="Change players and engine settings">Settings</button>
+      <button type="button" class="btn btn--small game-controls__btn" data-action="new-game" title="Start a new game">New game</button>
+      <button type="button" class="btn btn--small game-controls__btn" data-action="undo" ${canUndo ? '' : 'disabled'} title="Undo last move">Undo</button>
+      <button type="button" class="btn btn--small game-controls__btn" data-action="flip" title="Flip board orientation">Flip</button>
+      <button type="button" class="btn btn--small game-controls__btn" data-action="logs" title="Show AI thinking log for last move">Logs</button>
+      <button type="button" class="btn btn--small game-controls__btn" data-action="load-notation" title="Load game from notation">Load</button>
+      <button type="button" class="btn btn--small game-controls__btn" data-action="change-players" title="Change players and engine settings">Settings</button>
     </div>
     ${undoPaused ? '<div class="undo-pause-banner">Engine paused after undo — resuming shortly…</div>' : ''}
   `;
