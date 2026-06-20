@@ -14,6 +14,7 @@ import {
   blockedEdgesFromCanonicalWalls,
   canonicalEdgeKey,
   canonicalStateFromBoard,
+  canonicalPositionKeyFromBoard,
   enumerateWallSlots,
   expectedBlockedEdgesForWall,
   findCanonicalPathToGoal,
@@ -176,7 +177,6 @@ const ok = validateEngineMoveBeforeCommit({
   request: { requestSeq: 2, gameGeneration: 1, positionKey: 'k', seatIndex: 0, sideToMove: 1 },
   current: { requestSeq: 2, gameGeneration: 1, positionKey: 'k', seatIndex: 0 },
   canonicalLegalMoves: startLegal,
-  titaniumLegalMoves: startLegal,
 });
 assert(ok.ok, 'legal move passes');
 const stale = validateEngineMoveBeforeCommit({
@@ -185,7 +185,6 @@ const stale = validateEngineMoveBeforeCommit({
   request: { requestSeq: 1, gameGeneration: 1, positionKey: 'k', seatIndex: 0, sideToMove: 1 },
   current: { requestSeq: 2, gameGeneration: 1, positionKey: 'k', seatIndex: 0 },
   canonicalLegalMoves: startLegal,
-  titaniumLegalMoves: startLegal,
 });
 assertEqual(stale.reason, 'stale-request-seq', 'stale seq rejected');
 
@@ -197,7 +196,7 @@ const logText = formatCanonicalGameLog({
   history,
   state: canon,
   legalMoves,
-  positionKey: positionKeyFromHistory(session.actions),
+  positionKey: canonicalPositionKeyFromBoard(session.board),
   blockedEdges,
   isFlipped: false,
 });
