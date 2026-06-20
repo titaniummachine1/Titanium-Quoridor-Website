@@ -730,9 +730,10 @@ body {
 }
 
 .btn--small {
-  font-size: 0.72rem;
-  padding: 2px 8px;
+  font-size: 0.78rem;
+  padding: 5px 10px;
   border-radius: 4px;
+  white-space: nowrap;
 }
 
 .toggle-group__cat-status {
@@ -1136,13 +1137,22 @@ body {
   position: absolute;
   inset: 0;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.45);
+  gap: 14px;
+  background: rgba(0, 0, 0, 0.55);
   color: white;
   font-size: 1.5rem;
   font-weight: 700;
   border-radius: 12px;
+  z-index: 20;
+  /* Contained within board-panel's isolated stacking context — never overlaps dialogs */
+}
+
+.winner-banner__newgame {
+  font-size: 0.85rem;
+  padding: 8px 20px;
 }
 
 /* Sidebar + legacy controls card */
@@ -1722,23 +1732,523 @@ body {
   font-family: 'Roboto Mono', monospace;
   font-size: 0.8rem;
   color: var(--muted);
-  word-break: break-word;
+  
+/* ─── Player dialog time slider ─────────────────────────────────── */
+
+.player-dialog__time-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 6px;
 }
 
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
+.player-dialog__time-val {
+  color: var(--text);
+  font-weight: 600;
 }
 
-@keyframes pulse {
-  0%,
-  100% {
-    transform: scale(1);
-    opacity: 0.85;
-  }
-  50% {
-    transform: scale(0.88);
-    opacity: 0.5;
-  }
+.player-dialog__time-slider {
+  width: 100%;
+  accent-color: var(--p1-wall);
+  cursor: pointer;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   New clean layout — game-layout vertical stack
+   ═══════════════════════════════════════════════════════════════ */
+
+.app-shell {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding: 8px 8px 24px;
+}
+
+.game-layout {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  max-width: 560px;
+}
+
+.card-slot {
+  width: 100%;
+}
+
+.board-slot {
+  width: 100%;
+  min-width: 0;
+}
+
+.controls-slot {
+  width: 100%;
+}
+
+.notation-slot {
+  width: 100%;
+}
+
+/* ─── Player card ───────────────────────────────────────────────── */
+
+.player-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 12px;
+  font-size: 0.82rem;
+  transition: border-color 0.2s;
+}
+
+.player-card--active {
+  border-color: var(--p1-wall);
+  box-shadow: 0 0 0 1px rgba(139, 94, 52, 0.25);
+}
+
+.player-card--winner {
+  border-color: #8fd48f;
+  box-shadow: 0 0 0 1px rgba(143, 212, 143, 0.2);
+}
+
+.player-card__left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+}
+
+.player-card__right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.player-card__pawn {
+  flex-shrink: 0;
+}
+
+.player-card__info {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.player-card__name {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+}
+
+.player-card__engine-label {
+  font-size: 0.72rem;
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.player-card__status {
+  font-size: 0.76rem;
+  color: var(--muted);
+}
+
+.player-card__status--thinking {
+  color: #8fd48f;
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+.player-card__bestmove {
+  font-size: 0.75rem;
+  color: var(--muted);
+  font-family: 'Roboto Mono', monospace;
+}
+
+.player-card__bestmove strong {
+  color: var(--text);
+}
+
+.player-card__score {
+  font-family: 'Roboto Mono', monospace;
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: var(--text);
+  min-width: 36px;
+  text-align: right;
+}
+
+.player-card__meta {
+  font-size: 0.72rem;
+  color: var(--muted);
+  font-family: 'Roboto Mono', monospace;
+  white-space: nowrap;
+}
+
+/* ─── Pawn icons ────────────────────────────────────────────────── */
+
+.pawn-icon {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.25);
+  flex-shrink: 0;
+}
+
+.pawn-icon--seat0 {
+  background: var(--p1);
+}
+
+.pawn-icon--seat1 {
+  background: var(--p2);
+}
+
+/* ─── Play Now button ───────────────────────────────────────────── */
+
+.btn--playnow {
+  font-size: 0.72rem;
+  padding: 3px 9px;
+  border-radius: 5px;
+  background: var(--p1-wall);
+  border-color: var(--p1-wall);
+  color: #fff;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.btn--playnow:hover:not(:disabled) {
+  background: #a07040;
+  border-color: #a07040;
+}
+
+/* ─── Compact game controls ─────────────────────────────────────── */
+
+.game-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 4px 0;
+}
+
+.game-controls .btn--small {
+  flex: 1;
+  min-width: 60px;
+  text-align: center;
+}
+
+.undo-pause-banner {
+  font-size: 0.76rem;
+  color: #8fd48f;
+  padding: 3px 0;
+  text-align: center;
+}
+
+/* ─── Notation bar ──────────────────────────────────────────────── */
+
+.notation-bar {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 0.78rem;
+}
+
+.notation-bar__moves {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  overflow-x: auto;
+  font-family: 'Roboto Mono', monospace;
+  color: var(--text);
+  max-height: 80px;
+}
+
+.notation-pair {
+  display: flex;
+  gap: 3px;
+  align-items: baseline;
+}
+
+.notation-num {
+  color: var(--muted);
+  font-size: 0.7rem;
+  user-select: none;
+}
+
+.notation-move {
+  cursor: default;
+}
+
+.notation-bar__empty {
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-style: italic;
+}
+
+.notation-bar__result {
+  font-weight: 700;
+  color: #8fd48f;
+  margin-left: 4px;
+}
+
+.notation-bar__errors {
+  margin-top: 4px;
+  font-size: 0.72rem;
+  color: #e08080;
+}
+
+/* ─── Ghost button ──────────────────────────────────────────────── */
+
+.btn--ghost {
+  background: transparent;
+  border-color: var(--border);
+}
+
+.btn--ghost:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: var(--p1-wall);
+}
+
+/* ─── Dialog overlay ────────────────────────────────────────────── */
+
+.dialog-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.62);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 16px;
+}
+
+/* ─── Player dialog ─────────────────────────────────────────────── */
+
+.player-dialog {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  width: 100%;
+  max-width: 460px;
+  max-height: 90vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.player-dialog__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 18px 0;
+}
+
+.player-dialog__title {
+  font-size: 1rem;
+  font-weight: 700;
+  margin: 0;
+}
+
+.player-dialog__close {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 1rem;
+  cursor: pointer;
+  padding: 4px 8px;
+  line-height: 1;
+  border-radius: 4px;
+}
+
+.player-dialog__close:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.player-dialog__body {
+  padding: 12px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.player-dialog__hint {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.player-dialog__seat {
+  background: rgba(0, 0, 0, 0.18);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.player-dialog__seat-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.player-dialog__seat-name {
+  font-weight: 600;
+  font-size: 0.92rem;
+}
+
+.player-dialog__field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.player-dialog__field--hidden {
+  display: none;
+}
+
+.player-dialog__label {
+  font-size: 0.72rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+}
+
+.player-dialog__select {
+  font: inherit;
+  background: #2a2825;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 6px 8px;
+}
+
+.player-dialog__preset-group {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.player-dialog__preset-group .btn {
+  flex: 1;
+  min-width: 52px;
+  text-align: center;
+}
+
+.player-dialog__footer {
+  display: flex;
+  gap: 8px;
+  padding: 12px 18px 16px;
+  border-top: 1px solid var(--border);
+}
+
+.player-dialog__start {
+  flex: 1;
+}
+
+/* ─── Load notation dialog ──────────────────────────────────────── */
+
+.load-dialog {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  width: 100%;
+  max-width: 420px;
+  display: flex;
+  flex-direction: column;
+}
+
+.load-dialog__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px 0;
+}
+
+.load-dialog__title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  margin: 0;
+}
+
+.load-dialog__close {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 1rem;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+.load-dialog__close:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.load-dialog__body {
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.load-dialog__input {
+  font: inherit;
+  font-family: 'Roboto Mono', monospace;
+  font-size: 0.82rem;
+  background: #222;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 8px 10px;
+  resize: vertical;
+}
+
+.load-dialog__error {
+  font-size: 0.78rem;
+  color: #e08080;
+  padding: 4px 0;
+}
+
+.load-dialog__footer {
+  display: flex;
+  gap: 8px;
+  padding: 8px 16px 14px;
+  border-top: 1px solid var(--border);
+}
+
+/* ─── Winner banner (board-contained, never overlaps dialogs) ───── */
+
+.winner-banner {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  background: rgba(0, 0, 0, 0.55);
+  color: white;
+  font-size: 1.5rem;
+  font-weight: 700;
+  border-radius: 12px;
+  z-index: 20;
+}
+
+.winner-banner__newgame {
+  font-size: 0.85rem;
+  padding: 8px 20px;
 }

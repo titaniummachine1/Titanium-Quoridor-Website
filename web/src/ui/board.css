@@ -7,6 +7,8 @@
   max-width: min(640px, 100%);
   margin-inline: auto;
   touch-action: manipulation;
+  /* Contain all board z-indexes so they never escape above dialogs */
+  isolation: isolate;
 }
 
 .board--dragging {
@@ -86,7 +88,7 @@
   height: 4%;
   width: 65%;
   border-radius: 3px;
-  z-index: 1100;
+  z-index: 5;
   opacity: 0;
   transition: opacity 0.5s ease;
   box-shadow: 2px 3px 3px #0000004d;
@@ -515,7 +517,7 @@
   height: 92%;
   transform: translate(5%, 5%);
   border-radius: 50%;
-  z-index: 2000;
+  z-index: 10;
   box-shadow: 1px 2px 2px #9c6644;
 }
 
@@ -530,7 +532,7 @@
 .board-cell__wall {
   position: relative;
   border-radius: 3px;
-  z-index: 2000;
+  z-index: 8;
   opacity: 0;
   width: 90%;
   height: 90%;
@@ -657,8 +659,4 @@
   .board--rotate .board-cell__square {
     box-shadow: -1px -2px 2px #9c6644;
   }
-
-  .board--rotate .board-cell__pawn {
-    box-shadow: -1px -2px 2px #9c6644;
-  }
-}
+

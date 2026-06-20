@@ -21,8 +21,9 @@ if (import.meta.env.DEV) {
   window.__controller = controller;
 }
 
-controller._openPlayerDialog = (opts) =>
+controller._openPlayerDialog = function(opts) {
   openPlayerDialog(controller.getState(), controller, opts);
+};
 
 appRoot.innerHTML =
   '<div class="app-shell">' +
@@ -35,11 +36,11 @@ appRoot.innerHTML =
     '</div>' +
   '</div>';
 
-const topCardEl    = document.getElementById('top-card');
-const bottomCardEl = document.getElementById('bottom-card');
-const boardSlot    = document.getElementById('board-slot');
-const controlsSlot = document.getElementById('controls-slot');
-const notationSlot = document.getElementById('notation-slot');
+var topCardEl    = document.getElementById('top-card');
+var bottomCardEl = document.getElementById('bottom-card');
+var boardSlot    = document.getElementById('board-slot');
+var controlsSlot = document.getElementById('controls-slot');
+var notationSlot = document.getElementById('notation-slot');
 
 function topSeat(state) {
   return state.settings.rotateBoard ? 0 : 1;
@@ -48,11 +49,11 @@ function bottomSeat(state) {
   return state.settings.rotateBoard ? 1 : 0;
 }
 
-let lastControlsKey = '';
-let lastCardKey = '';
+var lastControlsKey = '';
+var lastCardKey = '';
 
 function cardKey(state) {
-  const ls = state.liveSearch;
+  var ls = state.liveSearch;
   return JSON.stringify({
     players: state.settings.players,
     playerToMove: state.playerToMove,
@@ -84,18 +85,18 @@ function controlsKey(state) {
 }
 
 function render() {
-  const state = controller.getState();
+  var state = controller.getState();
 
   renderBoard(boardSlot, state, controller);
 
-  const ck = cardKey(state);
+  var ck = cardKey(state);
   if (ck !== lastCardKey) {
     renderPlayerCard(topCardEl, state, topSeat(state), controller);
     renderPlayerCard(bottomCardEl, state, bottomSeat(state), controller);
     lastCardKey = ck;
   }
 
-  const ctk = controlsKey(state);
+  var ctk = controlsKey(state);
   if (ctk !== lastControlsKey) {
     renderGameControls(controlsSlot, state, controller);
     lastControlsKey = ctk;
@@ -105,8 +106,8 @@ function render() {
 }
 
 function renderLiveUpdate() {
-  const state = controller.getState();
-  const ck = cardKey(state);
+  var state = controller.getState();
+  var ck = cardKey(state);
   if (ck !== lastCardKey) {
     renderPlayerCard(topCardEl, state, topSeat(state), controller);
     renderPlayerCard(bottomCardEl, state, bottomSeat(state), controller);
@@ -120,13 +121,9 @@ controller.onLiveUpdate = renderLiveUpdate;
 renderGameControls(controlsSlot, controller.getState(), controller);
 render();
 
-const initialState = controller.getState();
-const noMoves = initialState.actions.length === 0;
-const hasAi = initialState.settings.players.some(function(p) { return p !== 'human'; });
-if (noMoves && !hasAi) {
-  setTimeout(function() {
-    openPlayerDialog(controller.getState(), controller, { mode: 'newgame' });
-  }, 100);
-}
-
-controller.maybeRequestAiMove();
+// Open player dialog on every load.
+// AI starts only after user clicks "Start game" — maybeRequestAiMove is called
+// inside newGameWithPlayers / changePlayers, not here.
+setTimeout(function() {
+  openPlayerDialog(controller.getState(), controller, { mode: 'newgame' });
+}, 120);
