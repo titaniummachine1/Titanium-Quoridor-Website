@@ -2,16 +2,25 @@
  * Compact player card — shown above and below the board.
  *
  * Shows: pawn icon, player name, turn status, thinking progress,
- * current best move, depth, nodes, elapsed time, and a "Play now" button.
- *
- * The "top" card (Black, seat 1) and "bottom" card (White, seat 0)
- * swap visual positions when the board is flipped, but the canonical
- * seat assignment never changes.
+ * engine-specific live settings, and a "Play now" button when safe.
  */
 
 import { PlayerType } from '../lib/engineConfig.js';
 import { playerColorName } from '../lib/playerColors.js';
 import { formatScoreForCard, isMateScore } from '../lib/engineScore.js';
+import { canPlayNow, resolveLiveBestMoveKey } from '../lib/liveBestMove.js';
+import { aceStrengthPresetsForPlayerType } from '../lib/aceTier.js';
+import {
+  STRENGTH_LEVEL_PRESETS,
+  TIME_TO_MOVE_PRESETS,
+  formatMaxDepth,
+  formatVisitsCap,
+  formatWallClock,
+  maxDepthFromVisitsBudget,
+  visitsFromSliderPosition,
+} from '../lib/timeControl.js';
+import { renderDiscreteSlider } from './discreteSlider.js';
+import { wireRangeSlider } from './sliderWire.js';
 
 function escHtml(s) {
   return String(s)
@@ -58,22 +67,142 @@ function resolveDepth(snap) {
   return deep?.depth ?? snap.depth ?? snap.searchDepth ?? null;
 }
 
-/**
- * Render a player card element into `container`.
- *
- * @param {HTMLElement} container
- * @param {object} state   Full app state
- * @param {number} seatIndex  0=White, 1=Black
- * @param {object} controller
- */
+function renderLiveSettings(ui, playerNum) {
+  if (!ui || ui.isHuman) return '';
+
+  if (ui.isLocalMcts) {
+    const { min: tMin, max: tMax, step: tStep } = ui.wallclockRange;
+    const { min: vMin, max: vMax, step: vStep } = ui.visitsRange;
+    const budgetLabel = ui.isTitanium ? 'Nodes' : ui.isQuoridorV3 ? 'Depth' : 'Rollouts';
+    const visitsSlider = ui.isAceEngine
+      ? ''
+      : `
+        <label class="control-label control-label--sub">${budgetLabel}</label>
+        <div class="time-slider-row">
+          <input type="range" class="time-slider scraped-slider"
+            data-setting="visits-${playerNum}" min="${vMin}" max="${vMax}" step="${vStep}"
+            value="${ui.visitsSliderPosition}" />
+          <output class="time-slider-value" data-visits-label="${playerNum}">${
+            ui.isQuoridorV3
+              ? formatMaxDepth(maxDepthFromVisitsBudget(ui.visitsBudget))
+              : formatVisitsCap(ui.visitsBudget)
+          }</output>
+        </div>`;
+
+    return `
+      <details class="player-card__settings"${ui.isThinking ? ' open' : ''}>
+        <summary class="player-card__settings-toggle">Engine settings</summary>
+        <div class="player-ai-settings player-ai-settings--compact">
+          ${ui.isTitanium
+            ? renderDiscreteSlider({
+              label: 'Strength',
+              settingName: 'strength-level',
+              playerNum,
+              value: ui.strengthLevel,
+              presets: STRENGTH_LEVEL_PRESETS,
+            })
+            : ''}
+          ${ui.isAceFamily
+            ? renderDiscreteSlider({
+              label: 'Version',
+              settingName: 'strength-level',
+              playerNum,
+              value: ui.strengthLevel,
+              presets: aceStrengthPresetsForPlayerType(ui.playerType),
+            })
+            : ''}
+          <label class="control-label control-label--sub">Time</label>
+          <div class="time-slider-row">
+            <input type="range" class="time-slider scraped-slider"
+              data-setting="wallclock-${playerNum}" min="${tMin}" max="${tMax}" step="${tStep}"
+              value="${ui.wallClockSeconds}" />
+            <output class="time-slider-value" data-wallclock-label="${playerNum}">${formatWallClock(ui.wallClockSeconds)}</output>
+          </div>
+          ${visitsSlider}
+        </div>
+      </details>`;
+  }
+
+  if (ui.isRemote) {
+    return `
+      <details class="player-card__settings"${ui.isThinking ? ' open' : ''}>
+        <summary class="player-card__settings-toggle">Engine settings</summary>
+        <div class="player-ai-settings player-ai-settings--compact">
+          ${renderDiscreteSlider({
+            label: 'Strength',
+            settingName: 'strength-level',
+            playerNum,
+            value: ui.strengthLevel,
+            presets: STRENGTH_LEVEL_PRESETS,
+          })}
+          ${renderDiscreteSlider({
+            label: 'Thinking mode',
+            settingName: 'time-to-move',
+            playerNum,
+            value: ui.timeToMove,
+            presets: TIME_TO_MOVE_PRESETS,
+          })}
+        </div>
+      </details>`;
+  }
+
+  return '';
+}
+
+function wireLiveSettings(container, controller, playerNum) {
+  const refresh = () => controller.onChange?.();
+
+  wireRangeSlider(
+    container,
+    `[data-setting="strength-level-${playerNum}"]`,
+    (value) => controller.setPlayerStrengthLevel(playerNum, value, { silent: true }),
+    () => controller._afterLivePlayerSettingChange(playerNum, { rebindEngine: true }),
+  );
+
+  wireRangeSlider(
+    container,
+    `[data-setting="time-to-move-${playerNum}"]`,
+    (value) => controller.setPlayerTimeToMove(playerNum, value, { silent: true }),
+    () => controller._afterLivePlayerSettingChange(playerNum, { rebindEngine: true }),
+  );
+
+  wireRangeSlider(
+    container,
+    `[data-setting="wallclock-${playerNum}"]`,
+    (value) => {
+      controller.setPlayerWallClock(playerNum, value, { silent: true });
+      const label = container.querySelector(`[data-wallclock-label="${playerNum}"]`);
+      if (label) label.textContent = formatWallClock(Number(value));
+    },
+    () => controller._afterLivePlayerSettingChange(playerNum),
+  );
+
+  wireRangeSlider(
+    container,
+    `[data-setting="visits-${playerNum}"]`,
+    (value) => {
+      const visits = visitsFromSliderPosition(value);
+      controller.setPlayerVisitsBudget(playerNum, visits, { silent: true });
+      const label = container.querySelector(`[data-visits-label="${playerNum}"]`);
+      if (label) {
+        const isV3 = controller.getPlayerAiSettingsUiForSlot(playerNum).isQuoridorV3;
+        label.textContent = isV3
+          ? formatMaxDepth(maxDepthFromVisitsBudget(visits))
+          : formatVisitsCap(visits);
+      }
+    },
+    () => controller._afterLivePlayerSettingChange(playerNum),
+  );
+}
+
 export function renderPlayerCard(container, state, seatIndex, controller) {
   const playerType = state.settings.players[seatIndex];
   const isHuman = playerType === PlayerType.Human;
   const isThinking = state.aiThinking && state.thinkingSeatIndex === seatIndex;
   const isMyTurn = !state.winner && !state.isDraw && state.playerToMove === seatIndex + 1;
   const colorName = playerColorName(seatIndex + 1);
+  const ui = state.playerAiSettingsUi?.[seatIndex];
 
-  // Resolve what to show
   const liveSnap = isThinking ? state.liveSearch : null;
   const completedSnap = state.lastCompletedThinkBySeat?.[seatIndex];
   const snap = liveSnap ?? completedSnap;
@@ -86,7 +215,14 @@ export function renderPlayerCard(container, state, seatIndex, controller) {
   const thinkMs = liveSnap?.elapsedMs ?? snap?.thinkMs ?? null;
   const rootWinRate = snap?.rootWinRate ?? null;
 
-  // Status line
+  const livePvMove = isThinking
+    ? resolveLiveBestMoveKey({
+      ...state,
+      thinkingSeatIndex: seatIndex,
+      searchGeneration: state.searchGeneration,
+    })
+    : null;
+
   let statusText = '';
   if (state.winner) {
     statusText = state.winner === seatIndex + 1 ? 'Winner!' : '';
@@ -100,7 +236,6 @@ export function renderPlayerCard(container, state, seatIndex, controller) {
     statusText = 'Waiting…';
   }
 
-  // Score display
   let scoreDisplay = '';
   const isMate = isMateScore(score);
   if (score != null && Number.isFinite(Number(score))) {
@@ -109,11 +244,11 @@ export function renderPlayerCard(container, state, seatIndex, controller) {
     scoreDisplay = `${(rootWinRate * 100).toFixed(0)}%`;
   }
 
-  // Play Now button: show when thinking and we have at least one completed move OR a best move from live search
-  const hasValidBestMove = isThinking && (
-    state.liveSearch?.move != null ||
-    (completedSnap?.move != null && completedSnap.move !== '(none)')
-  );
+  const showPlayNow = isThinking && canPlayNow({
+    ...state,
+    thinkingSeatIndex: seatIndex,
+    searchGeneration: state.searchGeneration,
+  });
 
   container.innerHTML = `
     <div class="player-card player-card--seat${seatIndex}${isMyTurn ? ' player-card--active' : ''}${state.winner === seatIndex + 1 ? ' player-card--winner' : ''}">
@@ -125,7 +260,7 @@ export function renderPlayerCard(container, state, seatIndex, controller) {
           </div>
           ${statusText ? `<div class="player-card__status${isThinking ? ' player-card__status--thinking' : ''}">${escHtml(statusText)}</div>` : ''}
           ${bestMove && !isThinking ? `<div class="player-card__bestmove">played <strong>${escHtml(bestMove)}</strong></div>` : ''}
-          ${isThinking && liveSnap?.pv ? `<div class="player-card__bestmove">pv <strong>${escHtml(liveSnap.pv.trim().split(/\s+/)[0] || '…')}</strong></div>` : ''}
+          ${livePvMove ? `<div class="player-card__bestmove">pv <strong>${escHtml(livePvMove)}</strong></div>` : ''}
         </div>
       </div>
       <div class="player-card__right">
@@ -135,12 +270,16 @@ export function renderPlayerCard(container, state, seatIndex, controller) {
           ${nodes > 0 ? `<span class="player-card__stat"><span class="player-card__stat-label">n</span>${escHtml(formatNodes(nodes))}</span>` : ''}
           ${thinkMs != null ? `<span class="player-card__stat">${escHtml(formatMs(thinkMs))}</span>` : ''}
         </div>
-        ${hasValidBestMove ? `<button class="btn btn--playnow" data-action="play-now" title="Stop search and play current best move">Play now</button>` : ''}
+        ${showPlayNow ? `<button class="btn btn--playnow" data-action="play-now" title="Stop search and play current best move">Play now</button>` : ''}
       </div>
+      ${renderLiveSettings(ui ? { ...ui, isThinking } : null, seatIndex + 1)}
     </div>
   `;
 
-  // Wire Play Now
+  if (!isHuman && ui) {
+    wireLiveSettings(container, controller, seatIndex + 1);
+  }
+
   container.querySelector('[data-action="play-now"]')?.addEventListener('click', () => {
     controller.playNow?.();
   });
