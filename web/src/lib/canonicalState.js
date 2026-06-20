@@ -21,6 +21,7 @@ import {
   WALL_GRID_SIZE,
 } from '../game/coordinates.js';
 import { screenRowIndices, screenColIndices } from './screenTransform.js';
+import { formatTitaniumOracleLine } from './titaniumOracleResult.js';
 
 export const THIRTY_FOUR_PLY_HISTORY =
   'e2 e8 e3 e7 e4 e6 d3h c6h f3h e4v a6v d4h h3h b3v c5v b5v c1v e7 d4 d7 c7v e8v c4 d8 c8h e8 c3 e9 c2 d9 b2 c9 b7h b9'.split(
@@ -158,6 +159,41 @@ export function positionKeyFromHistory(actions) {
   return actions.map((action) => toAlgebraic(action)).join('|');
 }
 
+function toCanonicalWallKey(w) {
+  return `${w.x},${w.y}${w.orientation}`;
+}
+
+/** Full board-state fingerprint — independent of move order / transpositions. */
+export function canonicalPositionKey(state) {
+  const horizontal = [...state.horizontalWalls]
+    .map(toCanonicalWallKey)
+    .sort()
+    .join(',');
+
+  const vertical = [...state.verticalWalls]
+    .map(toCanonicalWallKey)
+    .sort()
+    .join(',');
+
+  return [
+    `wp=${toAlgebraicSquare(state.pawns.white)}`,
+    `bp=${toAlgebraicSquare(state.pawns.black)}`,
+    `stm=${state.sideToMove}`,
+    `ww=${state.wallsRemaining.white}`,
+    `bw=${state.wallsRemaining.black}`,
+    `h=${horizontal}`,
+    `v=${vertical}`,
+  ].join('|');
+}
+
+export function canonicalPositionKeyFromBoard(board) {
+  return canonicalPositionKey(canonicalStateFromBoard(board));
+}
+
+export function canonicalPositionKeyFromActions(actions) {
+  return canonicalPositionKey(canonicalStateFromActions(actions));
+}
+
 export function legalMovesFromBoard(board) {
   return board.validActions().map((action) => toAlgebraic(action)).sort();
 }
@@ -209,6 +245,7 @@ export function formatCanonicalGameLog({
   blockedEdges,
   isFlipped,
   titaniumLegalMoves = null,
+  titaniumResult = null,
 }) {
   const whitePawn = toAlgebraicSquare(state.pawns.white);
   const blackPawn = toAlgebraicSquare(state.pawns.black);
@@ -244,7 +281,12 @@ export function formatCanonicalGameLog({
     `legalMoves (${legalMoves.length}): ${legalMoves.join(' ')}`,
   ];
 
-  if (titaniumLegalMoves) {
+  if (titaniumResult) {
+    const line = formatTitaniumOracleLine(titaniumResult);
+    if (line) {
+      lines.push(line);
+    }
+  } else if (titaniumLegalMoves) {
     lines.push(
       `titaniumLegalMoves (${titaniumLegalMoves.length}): ${titaniumLegalMoves.join(' ')}`,
     );
@@ -263,6 +305,8 @@ export function buildDiagnosticContext({
   decodedMove = null,
   reason = null,
   titaniumLegalMoves = null,
+  titaniumResult = null,
+  oracleState = null,
 }) {
   const snapshot = session.getSnapshot();
   const history = snapshot.actions.map((a) => toAlgebraic(a));
@@ -270,7 +314,7 @@ export function buildDiagnosticContext({
   const state = canonicalStateFromBoard(board);
   const blockedEdges = blockedEdgesFromCanonicalWalls(state);
   const legalMoves = legalMovesFromBoard(board);
-  const positionKey = positionKeyFromHistory(snapshot.actions);
+  const positionKey = canonicalPositionKeyFromBoard(board);
 
   const gameSection = formatCanonicalGameLog({
     history,
@@ -280,11 +324,17 @@ export function buildDiagnosticContext({
     blockedEdges,
     isFlipped: settings.rotateBoard ?? false,
     titaniumLegalMoves,
+    titaniumResult,
   });
 
   const meta = [
     '=== ENGINE DIAGNOSTIC ===',
     reason ? `reason: ${reason}` : null,
+    oracleState?.ready != null ? `oracleReady: ${oracleState.ready}` : null,
+    oracleState?.error
+      ? `oracleError: ${oracleState.error?.message ?? String(oracleState.error)}`
+      : null,
+    titaniumResult?.source ? `oracleSource: ${titaniumResult.source}` : null,
     `historyLength: ${history.length}`,
     `controllerSeat: ${request.seatIndex ?? '?'}`,
     `sideToMove: ${state.sideToMove}`,
@@ -307,10 +357,8 @@ export function validateEngineMoveBeforeCommit({
   request,
   current,
   canonicalLegalMoves,
-  titaniumLegalMoves,
 }) {
   const canonSet = new Set(canonicalLegalMoves);
-  const tiSet = new Set(titaniumLegalMoves ?? canonicalLegalMoves);
 
   if (request.requestSeq !== current.requestSeq) {
     return { ok: false, reason: 'stale-request-seq' };
@@ -329,9 +377,6 @@ export function validateEngineMoveBeforeCommit({
   }
   if (!canonSet.has(move)) {
     return { ok: false, reason: 'canonical-illegal' };
-  }
-  if (!tiSet.has(move)) {
-    return { ok: false, reason: 'titanium-illegal' };
   }
   return { ok: true };
 }
@@ -397,13 +442,18 @@ export function isBlackWin(board) {
   return board.isCoordinateGoal(2, pos);
 }
 
-export async function filterTitaniumLegalMoves(historyTokens, candidates) {
+/** Validate one proposed move against native Titanium (dev proxy only). */
+export async function validateProposedTitaniumMove(historyTokens, move) {
   const { validateMovesWithRust } = await import('./rustMoveValidate.js');
+  const result = await validateMovesWithRust([...historyTokens, move]);
+  return result.ok;
+}
+
+/** @deprecated prefer validateProposedTitaniumMove for a single candidate */
+export async function filterTitaniumLegalMoves(historyTokens, candidates) {
   const legal = [];
   for (const move of candidates) {
-    const trial = [...historyTokens, move];
-    const result = await validateMovesWithRust(trial);
-    if (result.ok) {
+    if (await validateProposedTitaniumMove(historyTokens, move)) {
       legal.push(move);
     }
   }
