@@ -19,6 +19,7 @@ import {
   INFO_LINE_RE,
   BESTMOVE_LINE_RE,
   TimeToMove,
+  StrengthLevel,
   buildPositionString,
   parseInfoLine,
 } from './engineConfig.js';
@@ -30,6 +31,17 @@ import {
   fromEngineAlgebraic,
 } from './remoteSync.js';
 import { createAbortError } from './engineAbort.js';
+
+/** Scale remote visit budget by UI strength preset (Beg. → Alpha). */
+const STRENGTH_VISIT_SCALE = [0.06, 0.18, 0.4, 0.7, 1.0];
+
+function scaleVisitsByStrength(baseVisits, strengthLevel) {
+  const level = Math.min(
+    StrengthLevel.Alpha,
+    Math.max(StrengthLevel.Beginner, Number(strengthLevel ?? StrengthLevel.Alpha)),
+  );
+  return Math.max(1, Math.round(baseVisits * STRENGTH_VISIT_SCALE[level]));
+}
 
 const WS_OPEN = 1;
 
@@ -261,10 +273,12 @@ export class EngineClient {
     this.lastTimeMode = timeMode;
     this._assertGoInvariant();
     const visits = this.config.visits?.[timeMode];
+    const strength = this._lastSearch?.aiSettings?.strengthLevel ?? StrengthLevel.Alpha;
     this.outstandingSearches++;
 
     if (Number.isFinite(visits)) {
-      this._enqueueRaw(CommandKind.SETOPTION, `setoption name visits value ${visits}`);
+      const scaled = scaleVisitsByStrength(visits, strength);
+      this._enqueueRaw(CommandKind.SETOPTION, `setoption name visits value ${scaled}`);
     }
     this.sendTimeToMoveSettings(timeMode);
     this._enqueueRaw(CommandKind.GO, 'go');

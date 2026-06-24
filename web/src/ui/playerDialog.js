@@ -3,8 +3,8 @@
  *
  * Engine-specific controls (not a generic difficulty system):
  *
- *   Remote (Ka / Ishtar):   Thinking mode selector — Immediate / Short / Medium / Long
- *   Titanium (both):        Thinking time slider (wall clock, no fake difficulty)
+ *   Remote (Ka / Ishtar):   Strength (Beg→Alpha) + thinking mode
+ *   Titanium:               NNUE weights (live/frozen) + thinking time slider
  *   ACE v8/v10/v13:         Tier selector (JS→Rust→MoveGen+) + time slider
  *   Gorisanson / QuoridorV3: Thinking time slider
  *   Human:                  No controls
@@ -21,9 +21,17 @@ import {
   isTitaniumEngine,
   isAceFamily,
   isAceV10Family,
+  STRENGTH_LEVEL_PRESETS,
+  TITANIUM_NET_LIVE,
+  TITANIUM_NET_FROZEN,
 } from '../lib/timeControl.js';
 
-const PREFS_KEY = 'quoridor-player-prefs-v3';
+const TITANIUM_NET_OPTIONS = [
+  { label: 'Live NNUE', id: TITANIUM_NET_LIVE },
+  { label: 'Frozen NNUE', id: TITANIUM_NET_FROZEN },
+];
+
+const PREFS_KEY = 'quoridor-player-prefs-v4';
 
 const TIME_TO_MOVE_OPTIONS = [
   { label: 'Immediate', id: TimeToMove.Intuition },
@@ -65,6 +73,7 @@ function formatTime(seconds) {
 function engineCategory(playerType) {
   const configs = getAllEngineConfigs();
   if (playerType === PlayerType.Human) return 'human';
+  if (playerType === PlayerType.ZeroInk) return 'zeroink';
   if (isRemoteEngine(playerType, configs)) return 'remote';
   if (isTitaniumEngine(playerType, configs)) return 'titanium';
   if (isAceV10Family(playerType, configs)) return 'ace-v10';
@@ -89,6 +98,8 @@ function loadPrefs(state) {
       wallClock:   saved.wallClock   ?? [DEFAULT_WALL_CLOCK, DEFAULT_WALL_CLOCK],
       timeToMove:  saved.timeToMove  ?? [DEFAULT_TIME_TO_MOVE, DEFAULT_TIME_TO_MOVE],
       aceStrength: saved.aceStrength ?? [DEFAULT_ACE_TIER, DEFAULT_ACE_TIER],
+      remoteStrength: saved.remoteStrength ?? [StrengthLevel.Alpha, StrengthLevel.Alpha],
+      titaniumNet: saved.titaniumNet ?? [TITANIUM_NET_LIVE, TITANIUM_NET_LIVE],
     };
   } catch {
     return {
@@ -96,6 +107,8 @@ function loadPrefs(state) {
       wallClock:   [DEFAULT_WALL_CLOCK, DEFAULT_WALL_CLOCK],
       timeToMove:  [DEFAULT_TIME_TO_MOVE, DEFAULT_TIME_TO_MOVE],
       aceStrength: [DEFAULT_ACE_TIER, DEFAULT_ACE_TIER],
+      remoteStrength: [StrengthLevel.Alpha, StrengthLevel.Alpha],
+      titaniumNet: [TITANIUM_NET_LIVE, TITANIUM_NET_LIVE],
     };
   }
 }
@@ -167,6 +180,8 @@ export function openPlayerDialog(state, controller, { mode = 'newgame' } = {}) {
     wallClock:   [...prefs.wallClock],
     timeToMove:  [...prefs.timeToMove],
     aceStrength: [...prefs.aceStrength],
+    remoteStrength: [...prefs.remoteStrength],
+    titaniumNet: [...prefs.titaniumNet],
   };
 
   const groups = getPlayerOptionGroups();
@@ -234,6 +249,8 @@ export function openPlayerDialog(state, controller, { mode = 'newgame' } = {}) {
       wallClock:   selections.wallClock,
       timeToMove:  selections.timeToMove,
       aceStrength: selections.aceStrength,
+      remoteStrength: selections.remoteStrength,
+      titaniumNet: selections.titaniumNet,
     });
     // Apply display toggles immediately via controller
     const bmHint = overlay.querySelector('[data-option="bestMoveHint"]')?.checked ?? true;
@@ -315,11 +332,13 @@ function renderEngineControls(seat, selections) {
   if (cat === 'human') return '';
 
   if (cat === 'remote') {
-    return renderTimeModeControls(seat, selections);
+    return renderRemoteStrengthControls(seat, selections) +
+           renderTimeModeControls(seat, selections);
   }
 
   if (cat === 'titanium') {
-    return renderTimeSlider(seat, selections, 'Thinking time');
+    return renderTitaniumNetControls(seat, selections) +
+           renderTimeSlider(seat, selections, 'Thinking time');
   }
 
   if (cat === 'ace-v10' || cat === 'ace-v13') {
@@ -331,10 +350,42 @@ function renderEngineControls(seat, selections) {
   return renderTimeSlider(seat, selections, 'Thinking time');
 }
 
+function renderRemoteStrengthControls(seat, selections) {
+  const current = selections.remoteStrength[seat] ?? StrengthLevel.Alpha;
+  const btns = STRENGTH_LEVEL_PRESETS.map((opt) =>
+    '<button class="btn ' + (opt.id === current ? 'btn--primary' : 'btn--ghost') + ' btn--small btn--fit"' +
+    ' data-strength-btn data-seat="' + seat + '" data-strength-id="' + opt.id + '">' +
+    escHtml(opt.label) + '</button>'
+  ).join('');
+
+  return (
+    '<div class="player-dialog__field">' +
+      '<label class="player-dialog__label">Strength</label>' +
+      '<div class="player-dialog__preset-group player-dialog__preset-group--strength">' + btns + '</div>' +
+    '</div>'
+  );
+}
+
+function renderTitaniumNetControls(seat, selections) {
+  const current = selections.titaniumNet[seat] ?? TITANIUM_NET_LIVE;
+  const btns = TITANIUM_NET_OPTIONS.map((opt) =>
+    '<button class="btn ' + (opt.id === current ? 'btn--primary' : 'btn--ghost') + ' btn--small btn--fit"' +
+    ' data-ti-net-btn data-seat="' + seat + '" data-ti-net-id="' + opt.id + '">' +
+    escHtml(opt.label) + '</button>'
+  ).join('');
+
+  return (
+    '<div class="player-dialog__field">' +
+      '<label class="player-dialog__label">NNUE weights</label>' +
+      '<div class="player-dialog__preset-group">' + btns + '</div>' +
+    '</div>'
+  );
+}
+
 function renderTimeModeControls(seat, selections) {
   const current = selections.timeToMove[seat] ?? DEFAULT_TIME_TO_MOVE;
   const btns = TIME_TO_MOVE_OPTIONS.map((opt) =>
-    '<button class="btn ' + (opt.id === current ? 'btn--primary' : 'btn--ghost') + ' btn--small"' +
+    '<button class="btn ' + (opt.id === current ? 'btn--primary' : 'btn--ghost') + ' btn--small btn--fit"' +
     ' data-tm-btn data-seat="' + seat + '" data-tm-id="' + opt.id + '">' +
     escHtml(opt.label) + '</button>'
   ).join('');
@@ -351,7 +402,7 @@ function renderAceTierControls(seat, selections, playerType) {
   const tiers = aceDisplayTiers(playerType);
   const current = selections.aceStrength[seat] ?? DEFAULT_ACE_TIER;
   const btns = tiers.map((t) =>
-    '<button class="btn ' + (t.id === current ? 'btn--primary' : 'btn--ghost') + ' btn--small"' +
+    '<button class="btn ' + (t.id === current ? 'btn--primary' : 'btn--ghost') + ' btn--small btn--fit"' +
     ' data-ace-btn data-seat="' + seat + '" data-ace-id="' + t.id + '">' +
     escHtml(t.label) + '</button>'
   ).join('');
@@ -395,6 +446,30 @@ function wireEngineControls(overlay, seat, selections) {
     });
   });
 
+  // Remote strength buttons
+  host.querySelectorAll('[data-strength-btn][data-seat="' + seat + '"]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const id = Number(btn.dataset.strengthId);
+      selections.remoteStrength[seat] = id;
+      host.querySelectorAll('[data-strength-btn][data-seat="' + seat + '"]').forEach((b) => {
+        b.classList.toggle('btn--primary', Number(b.dataset.strengthId) === id);
+        b.classList.toggle('btn--ghost', Number(b.dataset.strengthId) !== id);
+      });
+    });
+  });
+
+  // Titanium NNUE net buttons
+  host.querySelectorAll('[data-ti-net-btn][data-seat="' + seat + '"]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const id = btn.dataset.tiNetId;
+      selections.titaniumNet[seat] = id;
+      host.querySelectorAll('[data-ti-net-btn][data-seat="' + seat + '"]').forEach((b) => {
+        b.classList.toggle('btn--primary', b.dataset.tiNetId === id);
+        b.classList.toggle('btn--ghost', b.dataset.tiNetId !== id);
+      });
+    });
+  });
+
   // ACE tier buttons
   host.querySelectorAll('[data-ace-btn][data-seat="' + seat + '"]').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -434,16 +509,16 @@ function buildAiSettings(playerType, selections, seat) {
 
   if (cat === 'remote') {
     return {
-      strengthLevel: StrengthLevel.Alpha,
+      strengthLevel: selections.remoteStrength[seat] ?? StrengthLevel.Alpha,
       timeToMove:    selections.timeToMove[seat] ?? DEFAULT_TIME_TO_MOVE,
     };
   }
 
   if (cat === 'titanium') {
     return {
-      strengthLevel:    StrengthLevel.Alpha,
+      titaniumNet:      selections.titaniumNet[seat] ?? TITANIUM_NET_LIVE,
       wallClockSeconds: selections.wallClock[seat] ?? DEFAULT_WALL_CLOCK,
-      visitsBudget:     0,  // unlimited — time-only budget
+      visitsBudget:     0,
     };
   }
 

@@ -32,10 +32,31 @@ export const WALL_CLOCK_RANGE = {
   defaultSeconds: 10,
 };
 
-/** Default think budget for Quoridor v3 (JS αβ) — primary local adversary until Titanium NNUE lands. */
+/** Live vs pinned NNUE weights for Titanium v15 (one engine entry in the UI). */
+export const TITANIUM_NET_LIVE = 'live';
+export const TITANIUM_NET_FROZEN = 'frozen';
+
+export function resolveTitaniumEngineMode(aiSettings, playerType, engineConfigs) {
+  if (playerType === PlayerType.TitaniumV15Frozen) {
+    return 'titanium-v15-frozen';
+  }
+  const config = getEngineConfig(playerType, engineConfigs);
+  const net = aiSettings?.titaniumNet ?? TITANIUM_NET_LIVE;
+  if (net === TITANIUM_NET_FROZEN || config?.engineMode === 'titanium-v15-frozen') {
+    return 'titanium-v15-frozen';
+  }
+  return config?.engineMode ?? 'titanium-v15';
+}
+
+export function titaniumNetLabel(aiSettings) {
+  const net = aiSettings?.titaniumNet ?? TITANIUM_NET_LIVE;
+  return net === TITANIUM_NET_FROZEN ? 'Frozen' : 'Live';
+}
+
+/** Default think budget for legacy Quoridor v3 client (removed from UI, kept for imports). */
 export const QUORIDOR_V3_WALL_CLOCK_DEFAULT = 0.5;
 
-/** Default wall clock for ACE v8 engines (Rust + JS HTML). */
+/** Default wall clock for ACE engines (Rust + JS HTML). */
 export const ACE_WALL_CLOCK_DEFAULT = 10;
 
 /** Exponential visit cap for local MCTS — slider is linear, stored value is log-spaced. */
@@ -109,9 +130,13 @@ export function normalizePlayerType(playerType) {
     playerType === PlayerType.AceV8 ||
     playerType === PlayerType.AceV8Ti ||
     playerType === PlayerType.AceV8TiPmc ||
-    playerType === PlayerType.AceV8Js
+    playerType === PlayerType.AceV8Js ||
+    playerType === PlayerType.QuoridorV3
   ) {
-    return PlayerType.AceV8;
+    return PlayerType.TitaniumMinimax;
+  }
+  if (playerType === PlayerType.TitaniumV15Frozen) {
+    return PlayerType.TitaniumMinimax;
   }
   if (playerType === PlayerType.Titanium) {
     return PlayerType.TitaniumMinimax;
@@ -239,7 +264,7 @@ export function defaultPlayerAiSettings(playerType, engineConfigs) {
   }
   if (isTitaniumEngine(playerType, engineConfigs)) {
     return {
-      strengthLevel: StrengthLevel.Alpha,
+      titaniumNet: TITANIUM_NET_LIVE,
       wallClockSeconds: WALL_CLOCK_RANGE.defaultSeconds,
       visitsBudget: UNLIMITED_VISITS,
     };
@@ -324,14 +349,9 @@ export function describePlayerAiSettings(playerType, aiSettings, engineConfigs) 
     const time = formatWallClock(aiSettings.wallClockSeconds ?? WALL_CLOCK_RANGE.defaultSeconds);
     const cap = formatVisitsCap(aiSettings.visitsBudget ?? LOCAL_VISITS_RANGE.default);
     if (isTitaniumEngine(playerType, engineConfigs)) {
-      const modeLabel =
-        config.engineMode === 'titanium-v15-frozen'
-          ? 'Titanium v15 αβ (frozen NNUE)'
-          : config.engineMode === 'titanium-v15' || config.engineMode === 'minimax'
-            ? 'Titanium v15 αβ'
-            : 'Titanium αβ + CAT';
+      const net = titaniumNetLabel(aiSettings);
       const budgetLabel = 'nodes';
-      return `${config.name}: ${time} · ${cap} ${budgetLabel} · ${modeLabel}`;
+      return `${config.name}: ${time} · ${cap} ${budgetLabel} · ${net} NNUE`;
     }
     if (isQuoridorV3Engine(playerType, engineConfigs)) {
       const depthCap = formatMaxDepth(maxDepthFromVisitsBudget(aiSettings.visitsBudget));

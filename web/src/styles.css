@@ -1686,18 +1686,17 @@ body {
   --ring-color: #c08a4a;
 }
 
-/* Thinking: a rotating arc in the player's colour around their token.
-   Lives in document.body (not the card's innerHTML) so it is never recreated
-   on the card's frequent live re-renders — the spin stays smooth. */
+/* Thinking: rotating arc in the player's colour around their token. */
 .pawn-spinner {
-  position: fixed;
+  position: absolute;
+  inset: -4px;
   border-radius: 50%;
   border: 2px solid color-mix(in srgb, var(--ring-color, #8fd48f) 26%, transparent);
   border-top-color: var(--ring-color, #8fd48f);
   animation: pawn-spin 0.8s linear infinite;
   pointer-events: none;
   box-sizing: border-box;
-  z-index: 50;
+  z-index: 2;
 }
 
 .pawn-spinner[data-seat="0"] {
@@ -2010,9 +2009,23 @@ body {
 }
 
 .player-dialog__preset-group .btn {
-  flex: 1;
-  min-width: 52px;
+  flex: 1 1 0;
+  min-width: 0;
   text-align: center;
+}
+
+.player-dialog__preset-group .btn.btn--fit {
+  font-size: 0.72rem;
+  padding: 5px 6px;
+  line-height: 1.15;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.player-dialog__preset-group--strength .btn {
+  flex: 1 1 3.4rem;
+  min-width: 3.4rem;
 }
 
 .player-dialog__options {
@@ -2040,6 +2053,14 @@ body {
 
 .player-dialog__start {
   flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.player-dialog__cancel {
+  flex: 0 1 auto;
+  min-width: 0;
+  white-space: nowrap;
 }
 
 /* ─── Load notation dialog ──────────────────────────────────────── */

@@ -173,6 +173,9 @@ import {
   isAceV10Family,
   normalizePlayerType,
   getEngineConfig,
+  resolveTitaniumEngineMode,
+  TITANIUM_NET_FROZEN,
+  TITANIUM_NET_LIVE,
 } from '../lib/timeControl.js';
 import { playerColorName } from '../lib/playerColors.js';
 import { ponderCandidateSlots } from '../lib/enginePonder.js';
@@ -183,11 +186,7 @@ import {
 
 function isSavedSettingsValid(playerType, saved, engineConfigs) {
   if (isTitaniumEngine(playerType, engineConfigs)) {
-    return (
-      saved.strengthLevel != null &&
-      saved.wallClockSeconds != null &&
-      saved.visitsBudget != null
-    );
+    return saved.wallClockSeconds != null;
   }
   if (isAceFamily(playerType, engineConfigs)) {
     return saved.strengthLevel != null && saved.wallClockSeconds != null;
@@ -580,6 +579,13 @@ export class AppController {
       memory[playerType] = saved;
     }
     if (saved && isSavedSettingsValid(playerType, saved, this.engineConfigs)) {
+      if (isTitaniumEngine(playerType, this.engineConfigs) && !saved.titaniumNet) {
+        saved = {
+          ...saved,
+          titaniumNet: TITANIUM_NET_LIVE,
+          visitsBudget: saved.visitsBudget ?? 0,
+        };
+      }
       this.settings.playerAiSettings[index] = { ...saved };
       return;
     }
@@ -636,6 +642,7 @@ export class AppController {
       isAceFamily: isAceFamily(playerType, this.engineConfigs),
       isLocalMcts: isLocalMctsEngine(playerType, this.engineConfigs),
       isRemote: isRemoteEngine(playerType, this.engineConfigs),
+      titaniumNet: current?.titaniumNet ?? TITANIUM_NET_LIVE,
       strengthLevel: isAceFamily(playerType, this.engineConfigs)
         ? clampAceV10Tier(migrateAceV10Strength(current?.strengthLevel ?? 0), playerType)
         : (current?.strengthLevel ?? StrengthLevel.Alpha),
@@ -1464,10 +1471,14 @@ export class AppController {
       return this.createAceClient(config, seatIndex);
     }
     if (config.kind === 'titanium') {
+      const ai = this.settings.playerAiSettings[seatIndex] ?? {};
+      const playerType = this.settings.players[seatIndex];
+      const engineMode = resolveTitaniumEngineMode(ai, playerType, this.engineConfigs);
+      const patched = { ...config, engineMode };
       if (useStaticEngineBackend()) {
-        return new TitaniumWasmEngineClient(config);
+        return new TitaniumWasmEngineClient(patched);
       }
-      return new TitaniumEngineClient(config, { seatId: this.engineSeatKey(seatIndex) });
+      return new TitaniumEngineClient(patched, { seatId: this.engineSeatKey(seatIndex) });
     }
     return new EngineClient(config);
   }
@@ -1508,9 +1519,8 @@ export class AppController {
     }
     if (isTitaniumEngine(playerType, this.engineConfigs)) {
       const backend = useStaticEngineBackend() ? 'wasm' : 'native';
-      const mode =
-        getEngineConfig(playerType, this.engineConfigs)?.engineMode ?? 'titanium-v15';
-      return `${playerType}|${backend}|${mode}|${ai.strengthLevel ?? ''}`;
+      const mode = resolveTitaniumEngineMode(ai, playerType, this.engineConfigs);
+      return `${playerType}|${backend}|${mode}`;
     }
     const kind = getEngineConfig(playerType, this.engineConfigs)?.kind ?? playerType;
     return `${playerType}|${kind}`;

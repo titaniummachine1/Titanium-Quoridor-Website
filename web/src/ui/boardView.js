@@ -24,7 +24,43 @@ function boardStructureKey(state) {
   return JSON.stringify({
     rotate: state.settings?.rotateBoard,
     showWalls: state.settings?.displayRemainingWalls,
+    showCoords: state.settings?.displayCoordinates !== false,
   });
+}
+
+function buildCoordLabels(rotateBoard) {
+  const files = 'abcdefghi'.split('');
+  const ranks = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+  return {
+    viewFiles: rotateBoard ? [...files].reverse() : files,
+    viewRanks: rotateBoard ? ranks : [...ranks].reverse(),
+  };
+}
+
+function renderBoardCoords(rotateBoard) {
+  const { viewFiles, viewRanks } = buildCoordLabels(rotateBoard);
+
+  const top = document.createElement('div');
+  top.className = 'board-coords board-coords--top';
+  top.setAttribute('aria-hidden', 'true');
+  for (const file of viewFiles) {
+    const span = document.createElement('span');
+    span.className = 'board-coords__label';
+    span.textContent = file;
+    top.appendChild(span);
+  }
+
+  const left = document.createElement('div');
+  left.className = 'board-coords board-coords--left';
+  left.setAttribute('aria-hidden', 'true');
+  for (const rank of viewRanks) {
+    const span = document.createElement('span');
+    span.className = 'board-coords__label';
+    span.textContent = String(rank);
+    left.appendChild(span);
+  }
+
+  return { top, left };
 }
 
 function liveGhostKey(state, validActions) {
@@ -254,7 +290,7 @@ function syncBoardDom(dom, state, controller) {
   }
 
   cellEls.forEach((cell) => {
-    cell.classList.remove('hl', 'lastc', 'ghost-pawn');
+    cell.classList.remove('hl', 'hl--player1', 'hl--player2', 'lastc', 'ghost-pawn', 'ghost-pawn--player1', 'ghost-pawn--player2');
     cell.removeAttribute('data-action');
   });
   boardEl.querySelectorAll('.wallpiece.lastw, .wallpiece.ghost-pv').forEach((w) => {
@@ -278,12 +314,13 @@ function syncBoardDom(dom, state, controller) {
   }
 
   const ghostKey = liveGhostKey(state, validActions);
+  const sideClass = state.playerToMove === 2 ? 'player2' : 'player1';
   if (ghostKey && ghostKey !== lastKey) {
     if (ghostKey.length === 2) {
       const cell = viewMove(pawnCellFromCoordinate(parseAlgebraic(ghostKey).coordinate), isFlipped);
       const el = cellEls[cell];
       if (el) {
-        el.classList.add('ghost-pawn');
+        el.classList.add('ghost-pawn', `ghost-pawn--${sideClass}`);
         el.dataset.action = ghostKey;
       }
     } else {
@@ -295,6 +332,7 @@ function syncBoardDom(dom, state, controller) {
           preview: true,
           bad: false,
           ghost: true,
+          owner: state.playerToMove,
         });
       }
     }
@@ -306,7 +344,7 @@ function syncBoardDom(dom, state, controller) {
       if (!cell) {
         continue;
       }
-      cell.classList.add('hl');
+      cell.classList.add('hl', `hl--${sideClass}`);
       cell.dataset.action = engineMoveToAlgebraic(viewMove(cellIdx, isFlipped));
     }
     if (board.playerHasWalls()) {
@@ -432,6 +470,10 @@ export function renderBoard(container, state, controller) {
   container.dataset.boardStructureKey = structureKey;
   container.className = 'board-panel';
 
+  const showCoords = state.settings?.displayCoordinates !== false;
+  const coordsWrap = document.createElement('div');
+  coordsWrap.className = 'board-panel__coords-wrap';
+
   const gridWrap = document.createElement('div');
   gridWrap.className = 'board-panel__grid-wrap';
 
@@ -450,7 +492,18 @@ export function renderBoard(container, state, controller) {
   dom.wallRack = wallRack;
 
   gridWrap.appendChild(boardEl);
-  container.append(gridWrap, wallRack);
+
+  if (showCoords) {
+    const { top, left } = renderBoardCoords(Boolean(state.settings?.rotateBoard));
+    const row = document.createElement('div');
+    row.className = 'board-panel__coords-row';
+    row.append(left, gridWrap);
+    coordsWrap.append(top, row);
+  } else {
+    coordsWrap.appendChild(gridWrap);
+  }
+
+  container.append(coordsWrap, wallRack);
   container._boardDom = dom;
   bindBoardInput(container, () => controller.getState(), controller);
 

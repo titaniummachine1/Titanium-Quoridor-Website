@@ -16,6 +16,7 @@ import {
   STRENGTH_LEVEL_PRESETS,
   TIME_TO_MOVE_PRESETS,
   formatWallClock,
+  titaniumNetLabel,
 } from '../lib/timeControl.js';
 
 function escHtml(s) {
@@ -108,11 +109,8 @@ export function compactPlayerConfigSummary(ui) {
   }
 
   if (ui.isTitanium) {
-    const strength = expandStrengthLabel(
-      STRENGTH_LEVEL_PRESETS.find((p) => p.id === (ui.strengthLevel ?? StrengthLevel.Alpha))?.label
-        ?? 'Alpha',
-    );
-    return `${engine} · ${strength} · ${formatTimeSummary(ui.wallClockSeconds)}`;
+    const net = titaniumNetLabel({ titaniumNet: ui.titaniumNet });
+    return `${engine} · ${net} · ${formatTimeSummary(ui.wallClockSeconds)}`;
   }
 
   return `${engine} · ${formatTimeSummary(ui.wallClockSeconds)}`;
@@ -123,10 +121,8 @@ function shortEngineName(playerType) {
     return 'Titanium';
   }
   if (playerType === PlayerType.GorisansonMCTS) return 'Gorisanson';
-  if (playerType === PlayerType.QuoridorV3) return 'Quoridor v3';
   if (playerType === PlayerType.KaAI) return 'Ka';
   if (playerType === PlayerType.IshtarV3 || playerType === PlayerType.IshtarPonder) return 'Ishtar';
-  if (playerType === PlayerType.AceV8) return 'ACE v8';
   if (playerType === PlayerType.AceV10) return 'ACE v10';
   if (playerType === PlayerType.AceV13) return 'ACE v13';
   return String(playerType);
@@ -134,30 +130,29 @@ function shortEngineName(playerType) {
 
 /**
  * Spinner ring around the player's colour token while it thinks.
- * It lives in document.body — not in the card's innerHTML — so the card's
- * frequent live re-renders (each engine depth/data refresh) never recreate it
- * and restart its animation. We only reposition it; the spin stays smooth.
+ * Reuses one DOM node across card re-renders (smooth animation) and stays
+ * anchored to the pawn so it scrolls with the layout.
  */
 function updatePawnSpinner(container, active, seatIndex) {
+  const pawnEl = container.querySelector('.player-card__pawn');
   let spinner = container._pawnSpinner;
-  if (!active) {
-    if (spinner?.parentNode) spinner.parentNode.removeChild(spinner);
+
+  if (!active || !pawnEl) {
+    spinner?.remove();
+    container._pawnSpinner = null;
     return;
   }
-  const pawnEl = container.querySelector('.player-card__pawn');
-  if (!pawnEl) return;
+
   if (!spinner) {
     spinner = document.createElement('div');
     spinner.className = 'pawn-spinner';
     container._pawnSpinner = spinner;
   }
+
   spinner.dataset.seat = String(seatIndex);
-  const r = pawnEl.getBoundingClientRect();
-  spinner.style.left = `${r.left - 4}px`;
-  spinner.style.top = `${r.top - 4}px`;
-  spinner.style.width = `${r.width + 8}px`;
-  spinner.style.height = `${r.height + 8}px`;
-  if (spinner.parentNode !== document.body) document.body.appendChild(spinner);
+  if (spinner.parentNode !== pawnEl) {
+    pawnEl.appendChild(spinner);
+  }
 }
 
 export function renderPlayerCard(container, state, seatIndex, controller) {

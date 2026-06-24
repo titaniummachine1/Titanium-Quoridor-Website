@@ -25,30 +25,13 @@ const GORISANSON_ENGINE = {
   uctConst: 0.2,
 };
 
-const QUORIDOR_V3_ENGINE = {
-  kind: 'quoridor-v3',
-  name: 'Quoridor v3 (JS αβ)',
-  key: PlayerType.QuoridorV3,
-  tooltip:
-    'Self-contained αβ engine — Texel-tuned eval, TT, LMR, aspiration (from quoridor.html standalone)',
-};
-
 const TITANIUM_ENGINE = {
   kind: 'titanium',
-  name: 'Titanium v15 (live NNUE)',
+  name: 'Titanium v15',
   key: PlayerType.TitaniumMinimax,
   engineMode: 'titanium-v15',
   tooltip:
-    'Production titanium-v15 — grafted O1 movegen + latest trained NNUE. Native via `npm run dev`; WASM on GitHub Pages',
-};
-
-const TITANIUM_FROZEN_ENGINE = {
-  kind: 'titanium',
-  name: 'Titanium v15 (frozen NNUE)',
-  key: PlayerType.TitaniumV15Frozen,
-  engineMode: 'titanium-v15-frozen',
-  tooltip:
-    'Same v15 search — pinned pre-train NNUE blob (no micro-train updates). Compare vs live weights side-by-side',
+    'Production titanium-v15 — grafted O1 movegen + NNUE (live or frozen weights). Native via `npm run dev`; WASM on GitHub Pages',
 };
 
 const ZERO_INK_ENGINE = {
@@ -68,14 +51,6 @@ const ZERO_INK_ENGINE = {
     'quoridor-zero.ink AlphaZero net over REST. Needs network access.',
 };
 
-const ACE_V8_ENGINE = {
-  kind: 'ace-v8-family',
-  name: 'ACE v8',
-  key: PlayerType.AceV8,
-  tooltip:
-    'ACE v8 — use Version slider: JS (HTML) → Rust → MoveGen+ → MoveGen+ EME',
-};
-
 const ACE_V10_ENGINE = {
   kind: 'ace-v10-family',
   name: 'ACE v10',
@@ -92,16 +67,6 @@ const ACE_V13_ENGINE = {
     'ACE v13 — use Version slider: JS (HTML) → Rust → MoveGen+ (no EME)',
 };
 
-const PLACEHOLDER_ENGINES = [
-  {
-    kind: 'placeholder',
-    name: 'pavlosdais (C αβ)',
-    key: PlayerType.Pavlosdais,
-    tooltip: 'Competition baseline — not wired yet',
-    disabled: true,
-  },
-];
-
 export function getAllEngineConfigs() {
   const remote = getEngineList().map((entry) => ({
     ...entry,
@@ -109,15 +74,11 @@ export function getAllEngineConfigs() {
   }));
   return [
     GORISANSON_ENGINE,
-    QUORIDOR_V3_ENGINE,
     TITANIUM_ENGINE,
-    TITANIUM_FROZEN_ENGINE,
-    ACE_V8_ENGINE,
     ACE_V10_ENGINE,
     ACE_V13_ENGINE,
     ZERO_INK_ENGINE,
     ...remote,
-    ...PLACEHOLDER_ENGINES,
   ];
 }
 
@@ -137,28 +98,10 @@ export function getPlayerOptionGroups() {
           tooltip: GORISANSON_ENGINE.tooltip,
         },
         {
-          value: PlayerType.QuoridorV3,
-          label: QUORIDOR_V3_ENGINE.name,
-          disabled: false,
-          tooltip: QUORIDOR_V3_ENGINE.tooltip,
-        },
-        {
           value: PlayerType.TitaniumMinimax,
           label: TITANIUM_ENGINE.name,
           disabled: false,
           tooltip: TITANIUM_ENGINE.tooltip,
-        },
-        {
-          value: PlayerType.TitaniumV15Frozen,
-          label: TITANIUM_FROZEN_ENGINE.name,
-          disabled: false,
-          tooltip: TITANIUM_FROZEN_ENGINE.tooltip,
-        },
-        {
-          value: PlayerType.AceV8,
-          label: ACE_V8_ENGINE.name,
-          disabled: false,
-          tooltip: ACE_V8_ENGINE.tooltip,
         },
         {
           value: PlayerType.AceV10,
@@ -185,12 +128,6 @@ export function getPlayerOptionGroups() {
           disabled: false,
           tooltip: ZERO_INK_ENGINE.tooltip,
         },
-      ],
-    },
-    {
-      label: 'Competition (planned)',
-      options: [
-        { value: PlayerType.Pavlosdais, label: 'pavlosdais C', disabled: true },
       ],
     },
   ];

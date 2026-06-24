@@ -48,6 +48,8 @@ const dialogSrc = readSrc('ui/playerDialog.js');
 assert(dialogSrc.includes('renderTimeModeControls'), 'remote thinking mode in dialog');
 assert(dialogSrc.includes('renderTimeSlider'), 'time slider in dialog');
 assert(dialogSrc.includes('renderAceTierControls'), 'ACE tier in dialog');
+assert(dialogSrc.includes('renderRemoteStrengthControls'), 'remote strength in dialog');
+assert(dialogSrc.includes('renderTitaniumNetControls'), 'titanium net in dialog');
 assert(dialogSrc.includes('changePlayers'), 'settings apply via changePlayers');
 
 console.log('\n[ui] live setting restart preserved in controller');
@@ -70,10 +72,10 @@ const tiSummary = compactPlayerConfigSummary({
   isTitanium: true,
   isLocalMcts: true,
   playerType: PlayerType.TitaniumMinimax,
-  strengthLevel: StrengthLevel.Expert,
+  titaniumNet: 'live',
   wallClockSeconds: 3,
 });
-assert(tiSummary.includes('Titanium') && tiSummary.includes('Expert') && tiSummary.includes('3'), tiSummary);
+assert(tiSummary.includes('Titanium') && tiSummary.includes('Live') && tiSummary.includes('3'), tiSummary);
 
 assert(compactPlayerConfigSummary({ isHuman: true }) === 'Human', 'human summary');
 
