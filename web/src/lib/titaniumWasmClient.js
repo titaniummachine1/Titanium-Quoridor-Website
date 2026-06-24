@@ -61,6 +61,7 @@ export class TitaniumWasmEngineClient {
           blackDist: data.blackDist ?? pending.finalMeta?.blackDist,
           pv: data.pv ?? pending.finalMeta?.pv,
           rootMoves: data.rootMoves?.length ? data.rootMoves : (pending.finalMeta?.rootMoves),
+          rootMove: data.rootMove ?? pending.finalMeta?.rootMove,
         };
         const meta = pending.finalMeta;
         pending.onInfo?.({
@@ -75,6 +76,7 @@ export class TitaniumWasmEngineClient {
           rootScore: meta.rootScore,
           pv: data.pv ?? meta.pv,
           rootMoves: data.rootMoves?.length ? data.rootMoves : meta.rootMoves,
+          rootMove: data.rootMove ?? meta.rootMove,
           elapsedMs: data.elapsedMs ?? meta.elapsedMs,
           progress:
             meta.searchDepth && pending.timeMs

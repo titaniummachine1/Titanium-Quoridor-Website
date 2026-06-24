@@ -109,6 +109,16 @@ function bestLegalRootMoveKey(rootMoves, validKeySet) {
   return null;
 }
 
+function committedRootFromDepthLog(depthLog, validKeySet) {
+  const deep = deepestDepthEntry(depthLog);
+  if (!deep?.pv || typeof deep.pv !== 'string') return null;
+  const parts = deep.pv.trim().split(/\s+/).filter(Boolean);
+  const single =
+    parts.length === 1 || (parts.length === 2 && parts[0]?.toLowerCase() === 'pv');
+  if (!single) return null;
+  return matchLegalKey(firstPvTokenFromString(deep.pv), validKeySet);
+}
+
 /** Extract live best-move key from search payload (prefers legal rootMoves). */
 export function pvFirstMoveFromLiveSearch(liveSearch, { validKeySet = null, rootMoves = null } = {}) {
   if (!liveSearch) return null;
@@ -116,6 +126,12 @@ export function pvFirstMoveFromLiveSearch(liveSearch, { validKeySet = null, root
   const keys =
     validKeySet ??
     (liveSearch._validKeySet instanceof Set ? liveSearch._validKeySet : new Set());
+
+  const fromRootMoveField = matchLegalKey(liveSearch.rootMove, keys);
+  if (fromRootMoveField) return fromRootMoveField;
+
+  const fromCommittedDepth = committedRootFromDepthLog(liveSearch.depthLog ?? [], keys);
+  if (fromCommittedDepth) return fromCommittedDepth;
 
   const fromRoot = bestLegalRootMoveKey(rootMoves ?? liveSearch.rootMoves, keys);
   if (fromRoot) return fromRoot;

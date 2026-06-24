@@ -70,6 +70,41 @@ function liveGhostKey(state, validActions) {
   return resolveLiveBestMoveKey(state, { validActions }) ?? '';
 }
 
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+/** Stadium SVG ring — aspect matches horizontal/vertical wall bars (not a square blob). */
+function createGhostWallRing(isHorizontal) {
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('class', 'ghost-pv-ring');
+  svg.setAttribute('preserveAspectRatio', 'none');
+  svg.setAttribute('aria-hidden', 'true');
+
+  const stroke = document.createElementNS(SVG_NS, 'rect');
+  stroke.setAttribute('class', 'ghost-pv-ring__stroke');
+
+  if (isHorizontal) {
+    svg.setAttribute('viewBox', '0 0 100 28');
+    stroke.setAttribute('x', '1.5');
+    stroke.setAttribute('y', '1.5');
+    stroke.setAttribute('width', '97');
+    stroke.setAttribute('height', '25');
+    stroke.setAttribute('rx', '12.5');
+    stroke.setAttribute('ry', '12.5');
+  } else {
+    svg.setAttribute('viewBox', '0 0 28 100');
+    stroke.setAttribute('x', '1.5');
+    stroke.setAttribute('y', '1.5');
+    stroke.setAttribute('width', '25');
+    stroke.setAttribute('height', '97');
+    stroke.setAttribute('rx', '12.5');
+    stroke.setAttribute('ry', '12.5');
+  }
+
+  stroke.setAttribute('pathLength', '100');
+  svg.appendChild(stroke);
+  return svg;
+}
+
 function clearGhostPawnHints(cellEls) {
   cellEls.forEach((cell) => {
     cell.classList.remove('ghost-pawn', 'ghost-pawn--player1', 'ghost-pawn--player2');
@@ -86,6 +121,12 @@ function addWallElement(boardEl, type, viewSlot, { preview, bad, ghost, owner })
     (ghost ? ' ghost-pv' : '');
   const { gr, gc, rowSpan, colSpan } = wallGridFromSlot(type, viewSlot);
   applyGridPos(el, gr, gc, rowSpan, colSpan);
+  if (ghost) {
+    const inner = document.createElement('div');
+    inner.className = 'ghost-pv-inner';
+    inner.appendChild(createGhostWallRing(type === 0));
+    el.appendChild(inner);
+  }
   boardEl.appendChild(el);
   return el;
 }

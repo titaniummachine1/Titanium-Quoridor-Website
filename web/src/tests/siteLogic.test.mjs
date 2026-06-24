@@ -61,6 +61,24 @@ assertEqual(
 
 assertEqual(
   pvFirstMoveFromLiveSearch(
+    { depthLog: [{ depth: 6, pv: 'd3h' }], rootMoves: [{ move: 'e3', score: 999 }] },
+    { validKeySet: new Set(['e3', 'd3h']) },
+  ),
+  'd3h',
+  'single-move depth pv beats stale pawn rootMoves',
+);
+
+assertEqual(
+  pvFirstMoveFromLiveSearch(
+    { rootMove: 'f5h', depthLog: [{ depth: 4, pv: 'e3' }] },
+    { validKeySet: new Set(['e3', 'f5h']) },
+  ),
+  'f5h',
+  'explicit rootMove field wins',
+);
+
+assertEqual(
+  pvFirstMoveFromLiveSearch(
     { depthLog: [{ depth: 4, pv: 'z9 z8' }] },
     {
       validKeySet: new Set(['e3', 'd3h']),

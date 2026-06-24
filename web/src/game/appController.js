@@ -1653,6 +1653,7 @@ export class AppController {
             whiteDist: info.whiteDist ?? this.liveSearch?.whiteDist,
             blackDist: info.blackDist ?? this.liveSearch?.blackDist,
             rootMoves: siMerged?.rootMoves ?? this.liveSearch?.rootMoves,
+            rootMove: info.rootMove ?? this.liveSearch?.rootMove,
             lmrProfile: info.lmrProfile ?? this.liveSearch?.lmrProfile,
             lmrReSearches: info.lmrReSearches ?? this.liveSearch?.lmrReSearches,
             rootScore: liveRootScore,
