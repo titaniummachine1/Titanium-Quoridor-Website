@@ -11,7 +11,7 @@
 
 import { AppController } from './game/appController.js';
 import { renderBoard } from './ui/boardView.js';
-import { renderPlayerCard } from './ui/playerCard.js';
+import { renderPlayerCard, playerCardStructureKey } from './ui/playerCard.js';
 import { openPlayerDialog, refreshOpenPlayerDialog } from './ui/playerDialog.js';
 import { renderGameControls, updateNotationBar } from './ui/gameControls.js';
 
@@ -50,28 +50,21 @@ function bottomSeat(state) {
 }
 
 var lastControlsKey = '';
-var lastCardKey = '';
+var lastCardStructureKey = '';
 var lastTerminal = false;  // true once we've seen a game-over state
 
-function cardKey(state) {
-  var ls = state.liveSearch;
-  return JSON.stringify({
-    players: state.settings.players,
-    playerToMove: state.playerToMove,
-    thinking: state.aiThinking,
-    thinkingSeat: state.thinkingSeatIndex,
-    winner: state.winner,
-    isDraw: state.isDraw,
-    rotated: state.settings.rotateBoard,
-    completedSnaps: state.lastCompletedThinkBySeat
-      ? state.lastCompletedThinkBySeat.map(function(s) {
-          return s ? (s.move + '|' + s.score + '|' + s.depth + '|' + s.nodes + '|' + s.thinkMs) : '';
-        })
-      : [],
-    liveSnap: ls
-      ? (ls.mode + '|' + ls.nodes + '|' + ls.elapsedMs + '|' + ls.searchDepth + '|' + (typeof ls.pv === 'string' ? ls.pv : ''))
-      : '',
-  });
+function cardStructureKey(state) {
+  return (
+    playerCardStructureKey(state, topSeat(state)) +
+    '|' +
+    playerCardStructureKey(state, bottomSeat(state))
+  );
+}
+
+function renderPlayerCards(state) {
+  renderPlayerCard(topCardEl, state, topSeat(state), controller);
+  renderPlayerCard(bottomCardEl, state, bottomSeat(state), controller);
+  lastCardStructureKey = cardStructureKey(state);
 }
 
 function controlsKey(state) {
@@ -90,12 +83,7 @@ function render() {
 
   renderBoard(boardSlot, state, controller);
 
-  var ck = cardKey(state);
-  if (ck !== lastCardKey) {
-    renderPlayerCard(topCardEl, state, topSeat(state), controller);
-    renderPlayerCard(bottomCardEl, state, bottomSeat(state), controller);
-    lastCardKey = ck;
-  }
+  renderPlayerCards(state);
 
   var ctk = controlsKey(state);
   if (ctk !== lastControlsKey) {
@@ -117,12 +105,7 @@ function render() {
 function renderLiveUpdate() {
   var state = controller.getState();
   renderBoard(boardSlot, state, controller);
-  var ck = cardKey(state);
-  if (ck !== lastCardKey) {
-    renderPlayerCard(topCardEl, state, topSeat(state), controller);
-    renderPlayerCard(bottomCardEl, state, bottomSeat(state), controller);
-    lastCardKey = ck;
-  }
+  renderPlayerCards(state);
 }
 
 function renderAndRefreshDialog() {

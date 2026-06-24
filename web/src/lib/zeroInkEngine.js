@@ -1,25 +1,15 @@
 /**
  * quoridor-zero.ink — remote AlphaZero bot exposed over a stateless REST API.
  *
- * Every move is a self-contained POST to the stable `/api/play` endpoint
- * carrying the full position, so this behaves like a local engine client: no
- * session sync. The model is fixed server-side and the server owns the search
- * backend, threads and cpuct — the only knob we send is `visits` (search
- * effort): the player's difficulty (the Time preset) indexes the engine's
- * `visits` map, the same `config.visits[timeToMove]` mechanism the cloud
- * engines use. The server clamps the value to its allowed band.
+ * Every move is a self-contained POST to `/api/play` with the full position and
+ * a visit budget from the Time preset (Intuition / Short / Medium / Long).
  *
  * Wire format (POST /api/play, Content-Type: application/json):
  *   Request:  { state: <zero.ink state>, visits }
  *   Response: { move, score, thinkMs, stateAfter }
- *     - move.kind is "pawn" (use target cell) or "wall" (orientation + x,y)
- *     - score is the root eval in [-1, 1] from the side-to-move's perspective
- *     - stateAfter is the full position after the move (incl. winner)
- *   Invalid/finished positions return 400 { error }.
  *
- * The API sends CORS headers (Access-Control-Allow-Origin), so the browser can
- * call it cross-origin directly in every environment — local dev and static
- * GitHub Pages alike. A network/CORS failure surfaces as a clear engine error.
+ * Live UI: emit `onInfo` with `thinking: true` while the request is in flight,
+ * then again with the final PV/score before `onBestMove`.
  */
 
 import { QuoridorBoard, toAlgebraic } from './gameLogic.js';
@@ -27,7 +17,6 @@ import { boardToZeroInkState, zeroInkMoveToAction, zeroInkMoveToAlgebraic } from
 import { createAbortError } from './engineAbort.js';
 import { TimeToMove } from './engineConfig.js';
 
-/** Engine host. CORS is enabled server-side, so we call it directly everywhere. */
 const ZEROINK_HOST = 'https://quoridor-zero.ink';
 
 export class ZeroInkEngineClient {
@@ -137,20 +126,22 @@ export class ZeroInkEngineClient {
       }
     }
 
+    this.onInfo?.({
+      thinking: true,
+      mode: 'zeroink',
+      visits,
+    });
+
     try {
-      const result = await this.postJson(
-        '/api/play',
-        { state, visits },
-        abort.signal,
-      );
+      const result = await this.postJson('/api/play', { state, visits }, abort.signal);
 
       const move = result?.move;
       if (!move) {
         throw new Error('zero.ink returned no move');
       }
       const action = zeroInkMoveToAction(move);
+      const pv = zeroInkMoveToAlgebraic(move);
 
-      // Safety net: a wrong coordinate mapping would corrupt the game silently.
       if (!board.isValid(action)) {
         throw new Error(
           `zero.ink returned an illegal move (${toAlgebraic(action)}) for this position`,
@@ -158,16 +149,33 @@ export class ZeroInkEngineClient {
       }
 
       const elapsed = performance.now() - started;
+      const rootWinRate = typeof result.score === 'number' ? result.score : undefined;
+
+      this.onInfo?.({
+        thinking: true,
+        mode: 'zeroink',
+        visits,
+        time: elapsed,
+        elapsedMs: Math.round(elapsed),
+        rootWinRate,
+        pv,
+        nodes: visits,
+        progress: 0.99,
+      });
+
       this.finish();
       this.onInfo?.({
         time: elapsed,
-        rootWinRate: typeof result.score === 'number' ? result.score : undefined,
+        elapsedMs: Math.round(elapsed),
+        rootWinRate,
         visits,
-        pv: zeroInkMoveToAlgebraic(move),
+        pv,
+        nodes: visits,
         stoppedBy: 'zeroink',
         mode: 'zeroink',
         progress: 1,
       });
+
       const outcome = this.onBestMove?.(action);
       if (outcome === 'stale' || outcome === false) {
         this.clearQueuedSearches();

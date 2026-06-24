@@ -23,9 +23,20 @@ function firstPvTokenFromString(raw) {
   return parts[0];
 }
 
+/** Best root move by score (walls beat stale depth-log PV lines). */
+function bestRootMoveKey(rootMoves) {
+  if (!rootMoves?.length) return null;
+  const sorted = [...rootMoves].sort((a, b) => (b.score ?? -Infinity) - (a.score ?? -Infinity));
+  const head = sorted[0]?.move;
+  return typeof head === 'string' && head.trim() ? head.trim() : null;
+}
+
 /** Extract first PV token from live search payload (never from completed move). */
 export function pvFirstMoveFromLiveSearch(liveSearch) {
   if (!liveSearch) return null;
+
+  const fromRoot = bestRootMoveKey(liveSearch.rootMoves);
+  if (fromRoot) return fromRoot;
 
   if (Array.isArray(liveSearch.pv) && liveSearch.pv.length > 0) {
     try {
@@ -46,9 +57,6 @@ export function pvFirstMoveFromLiveSearch(liveSearch) {
   if (typeof deep?.pv === 'string' && deep.pv.trim()) {
     return firstPvTokenFromString(deep.pv);
   }
-
-  const rootMoves = liveSearch.rootMoves ?? [];
-  if (rootMoves[0]?.move) return rootMoves[0].move;
 
   if (liveSearch.move && liveSearch.move !== '(none)') return liveSearch.move;
 

@@ -138,6 +138,19 @@
   /* 9 cells + 8 grooves + 2 padding grooves = 12 cell-units (Ace proportions) */
   --cell: calc(100cqmin / 12);
   --groove: calc(var(--cell) * 0.3);
+  /* ── Ghost best-move hint tuning (edit these) ── */
+  --ghost-pawn-fill-p1: rgba(237, 224, 212, 0.45);
+  --ghost-pawn-fill-p2: rgba(96, 56, 8, 0.34);
+  --ghost-wall-fill-p1: rgba(237, 224, 212, 0.34);
+  --ghost-wall-fill-p2: rgba(96, 56, 8, 0.3);
+  --ghost-ring-p1: var(--p1, #ede0d4);
+  --ghost-ring-p2: var(--p2, #603808);
+  --ghost-ring-width: 2.5px;
+  --ghost-pawn-fill-inset: 12%;
+  --ghost-pawn-ring-inset: 9%;
+  --ghost-pawn-spin-period: 13.5s;
+  --ghost-wall-march-period: 13.5s;
+  --ghost-wall-dash: 6 4;
   padding: var(--groove);
   background: transparent;
   grid-template-columns: repeat(8, var(--cell) var(--groove)) var(--cell);
@@ -175,7 +188,7 @@
   outline: 2px solid var(--p2, #603808);
 }
 
-.quoridor-board .cell.hl::after {
+.quoridor-board .cell.hl:not(.ghost-pawn)::after {
   display: none;
 }
 
@@ -184,24 +197,90 @@
   box-shadow: 1px 2px 2px #9c6644;
 }
 
+@keyframes ghost-stroke-march {
+  to {
+    stroke-dashoffset: -100;
+  }
+}
+
+@keyframes ghost-pawn-ring-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .quoridor-board .cell.ghost-pawn::after,
+  .ghost-pv-ring__stroke {
+    animation: none;
+  }
+}
+
+.quoridor-board .cell.ghost-pawn::before {
+  content: '';
+  position: absolute;
+  inset: var(--ghost-pawn-fill-inset);
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.quoridor-board .cell.ghost-pawn--player1::before {
+  background: var(--ghost-pawn-fill-p1);
+  box-shadow: 0 0 8px rgba(237, 224, 212, 0.5);
+}
+
+.quoridor-board .cell.ghost-pawn--player2::before {
+  background: var(--ghost-pawn-fill-p2);
+  box-shadow: 0 0 8px rgba(96, 56, 8, 0.42);
+}
+
+/* Pawn: rotate only the dashed ring (::after); fill stays on ::before. */
 .quoridor-board .cell.ghost-pawn::after {
   content: '';
   position: absolute;
-  inset: 12%;
+  inset: var(--ghost-pawn-ring-inset);
   border-radius: 50%;
   pointer-events: none;
+  z-index: 4;
+  border: var(--ghost-ring-width) dashed transparent;
+  background: transparent;
+  animation: ghost-pawn-ring-spin var(--ghost-pawn-spin-period) linear infinite;
 }
 
 .quoridor-board .cell.ghost-pawn--player1::after {
-  border: 2px dashed var(--p1, #ede0d4);
-  background: rgba(237, 224, 212, 0.35);
-  box-shadow: 0 0 6px rgba(237, 224, 212, 0.55);
+  border-color: var(--ghost-ring-p1);
 }
 
 .quoridor-board .cell.ghost-pawn--player2::after {
-  border: 2px dashed var(--p2, #603808);
-  background: rgba(96, 56, 8, 0.28);
-  box-shadow: 0 0 6px rgba(96, 56, 8, 0.45);
+  border-color: var(--ghost-ring-p2);
+}
+
+.ghost-pv-ring {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  overflow: visible;
+}
+
+.ghost-pv-ring__stroke {
+  fill: none;
+  stroke-width: var(--ghost-ring-width);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+  stroke-dasharray: var(--ghost-wall-dash);
+  animation: ghost-stroke-march var(--ghost-wall-march-period) linear infinite;
+}
+
+.quoridor-board .wallpiece.ghost-pv.wallpiece--player1 .ghost-pv-ring__stroke {
+  stroke: var(--ghost-ring-p1);
+}
+
+.quoridor-board .wallpiece.ghost-pv.wallpiece--player2 .ghost-pv-ring__stroke {
+  stroke: var(--ghost-ring-p2);
 }
 
 .quoridor-board .pawn {
@@ -268,13 +347,13 @@
   box-sizing: border-box;
 }
 
-.quoridor-board .wallpiece.preview.wallpiece--player1:not(.bad) {
+.quoridor-board .wallpiece.preview.wallpiece--player1:not(.bad):not(.ghost-pv) {
   border: 2px dashed var(--p1, #ede0d4);
   background: rgba(237, 224, 212, 0.32);
   box-shadow: 0 0 6px rgba(237, 224, 212, 0.45);
 }
 
-.quoridor-board .wallpiece.preview.wallpiece--player2:not(.bad) {
+.quoridor-board .wallpiece.preview.wallpiece--player2:not(.bad):not(.ghost-pv) {
   border: 2px dashed var(--p2, #603808);
   background: rgba(96, 56, 8, 0.28);
   box-shadow: 0 0 6px rgba(96, 56, 8, 0.45);
@@ -290,15 +369,54 @@
   outline: 2px solid rgba(255, 220, 120, 0.95);
 }
 
-.quoridor-board .wallpiece.ghost-pv.wallpiece--player1 {
-  border: 2px dashed var(--p1, #ede0d4);
-  background: rgba(237, 224, 212, 0.32);
+.quoridor-board .wallpiece.ghost-pv {
+  position: relative;
+  border: none;
+  background: transparent;
+  overflow: visible;
+  transform: none;
+  z-index: 4;
+}
+
+.quoridor-board .wallpiece.ghost-pv::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  transform-origin: center;
+}
+
+.quoridor-board .wallpiece.ghost-pv.wallpiece--h::before {
+  transform: scaleY(0.64);
+}
+
+.quoridor-board .wallpiece.ghost-pv.wallpiece--v::before {
+  transform: scaleX(0.64);
+}
+
+.quoridor-board .wallpiece.ghost-pv .ghost-pv-inner {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  transform-origin: center;
+}
+
+.quoridor-board .wallpiece.ghost-pv.wallpiece--h .ghost-pv-inner {
+  transform: scaleY(0.64);
+}
+
+.quoridor-board .wallpiece.ghost-pv.wallpiece--v .ghost-pv-inner {
+  transform: scaleX(0.64);
+}
+
+.quoridor-board .wallpiece.ghost-pv.wallpiece--player1::before {
+  background: var(--ghost-wall-fill-p1);
   box-shadow: 0 0 6px rgba(237, 224, 212, 0.45);
 }
 
-.quoridor-board .wallpiece.ghost-pv.wallpiece--player2 {
-  border: 2px dashed var(--p2, #603808);
-  background: rgba(96, 56, 8, 0.28);
+.quoridor-board .wallpiece.ghost-pv.wallpiece--player2::before {
+  background: var(--ghost-wall-fill-p2);
   box-shadow: 0 0 6px rgba(96, 56, 8, 0.45);
 }
 

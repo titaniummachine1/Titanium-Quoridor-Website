@@ -155,7 +155,36 @@ function updatePawnSpinner(container, active, seatIndex) {
   }
 }
 
-export function renderPlayerCard(container, state, seatIndex, controller) {
+/** Stable card layout key — excludes live depth/nodes/pv so we can patch in place. */
+export function playerCardStructureKey(state, seatIndex) {
+  const playerType = state.settings.players[seatIndex];
+  const isHuman = playerType === PlayerType.Human;
+  const isThinking = state.aiThinking && state.thinkingSeatIndex === seatIndex;
+  const isMyTurn = !state.winner && !state.isDraw && state.playerToMove === seatIndex + 1;
+  const ui = state.playerAiSettingsUi?.[seatIndex];
+  const engineStatus = state.engineStatus?.[seatIndex];
+  const engineError = state.engineErrors?.[seatIndex];
+  const hasError =
+    !isHuman && engineStatus === 'error' && typeof engineError === 'string' && engineError.length > 0;
+  const completedSnap = state.lastCompletedThinkBySeat?.[seatIndex];
+  const bestMove = !isThinking ? completedSnap?.move ?? null : null;
+
+  return JSON.stringify({
+    seatIndex,
+    playerType,
+    isHuman,
+    isThinking,
+    isMyTurn,
+    winner: state.winner,
+    isDraw: state.isDraw,
+    configSummary: compactPlayerConfigSummary(ui),
+    hasError,
+    engineError: hasError ? engineError : '',
+    bestMove,
+  });
+}
+
+function derivePlayerCardView(state, seatIndex) {
   const playerType = state.settings.players[seatIndex];
   const isHuman = playerType === PlayerType.Human;
   const isThinking = state.aiThinking && state.thinkingSeatIndex === seatIndex;
@@ -172,7 +201,6 @@ export function renderPlayerCard(container, state, seatIndex, controller) {
   const completedSnap = state.lastCompletedThinkBySeat?.[seatIndex];
   const snap = liveSnap ?? completedSnap;
 
-  const configSummary = compactPlayerConfigSummary(ui);
   const bestMove = snap?.move ?? (liveSnap ? null : completedSnap?.move ?? null);
   const depth = resolveDepth(snap);
   const nodes = resolveNodes(snap);
@@ -194,8 +222,6 @@ export function renderPlayerCard(container, state, seatIndex, controller) {
       const plies = state.actions?.length ?? 0;
       const moves = Math.ceil(plies / 2);
       statusText = `Won in ${moves} move${moves === 1 ? '' : 's'}!`;
-    } else {
-      statusText = '';
     }
   } else if (state.isDraw) {
     statusText = 'Draw';
@@ -211,9 +237,6 @@ export function renderPlayerCard(container, state, seatIndex, controller) {
   const isMate = isMateScore(score);
   if (score != null && Number.isFinite(Number(score))) {
     scoreDisplay = formatScoreForCard(score);
-    // A *forced* win (e.g. the endgame certificate) reports a flat mate score with
-    // no real distance, so formatScoreForCard collapses it to "Won!". The game isn't
-    // actually over yet — show the winning pawn's real moves-to-goal instead.
     const mate = mateInfo(score);
     if (mate && mate.dist === 0 && !state.winner && !state.isDraw) {
       const winningSeat = mate.sign > 0 ? seatIndex : 1 - seatIndex;
@@ -234,38 +257,122 @@ export function renderPlayerCard(container, state, seatIndex, controller) {
     searchGeneration: state.searchGeneration,
   });
 
-  container.innerHTML = `
-    <div class="player-card player-card--seat${seatIndex}${isMyTurn ? ' player-card--active' : ''}${state.winner === seatIndex + 1 ? ' player-card--winner' : ''}" data-player-card-seat="${seatIndex}">
-      <div class="player-card__main">
-        <div class="player-card__left">
-          <div class="player-card__pawn pawn-icon pawn-icon--seat${seatIndex}">${
-            hasError
-              ? `<button type="button" class="pawn-icon__error" data-action="copy-engine-error" data-seat="${seatIndex}" title="Engine error — click to copy:&#10;${escAttr(engineError)}" aria-label="Engine error, click to copy">!</button>`
-              : ''
-          }</div>
-          <div class="player-card__info">
-            <div class="player-card__name">${escHtml(colorName)}</div>
-            <div class="player-card__config">${escHtml(configSummary)}</div>
-            ${statusText ? `<div class="player-card__status${isThinking ? ' player-card__status--thinking' : ''}" data-player-card-status="${seatIndex}">${escHtml(statusText)}</div>` : ''}
-            ${bestMove && !isThinking ? `<div class="player-card__bestmove">played <strong>${escHtml(bestMove)}</strong></div>` : ''}
-            ${livePvMove ? `<div class="player-card__bestmove">pv <strong>${escHtml(livePvMove)}</strong></div>` : ''}
-          </div>
-        </div>
-        <div class="player-card__right">
-          <div class="player-card__stats">
-            ${scoreDisplay ? `<span class="player-card__score${isMate ? ' player-card__score--mate' : ''}">${escHtml(scoreDisplay)}</span>` : ''}
-            ${depth != null ? `<span class="player-card__stat"><span class="player-card__stat-label">d</span>${depth}</span>` : ''}
-            ${nodes > 0 ? `<span class="player-card__stat"><span class="player-card__stat-label">n</span>${escHtml(formatNodes(nodes))}</span>` : ''}
-            ${thinkMs != null ? `<span class="player-card__stat">${escHtml(formatMs(thinkMs))}</span>` : ''}
-          </div>
-          ${showPlayNow ? `<button class="btn btn--playnow" data-action="play-now" title="Stop search and play current best move">Play now</button>` : ''}
-        </div>
-      </div>
-    </div>
-  `;
+  return {
+    playerType,
+    isHuman,
+    isThinking,
+    isMyTurn,
+    colorName,
+    hasError,
+    engineError,
+    configSummary: compactPlayerConfigSummary(ui),
+    bestMove,
+    livePvMove,
+    statusText,
+    scoreDisplay,
+    isMate,
+    depth,
+    nodes,
+    thinkMs,
+    showPlayNow,
+  };
+}
 
-  updatePawnSpinner(container, isThinking && !hasError, seatIndex);
+/** Patch live telemetry without tearing down the card DOM (keeps spinner animation). */
+export function patchPlayerCardLive(container, state, seatIndex, controller) {
+  const view = derivePlayerCardView(state, seatIndex);
+  const card = container.querySelector(`[data-player-card-seat="${seatIndex}"]`);
+  if (!card) {
+    return false;
+  }
 
+  card.classList.toggle('player-card--active', view.isMyTurn);
+  card.classList.toggle('player-card--winner', state.winner === seatIndex + 1);
+
+  const statusEl = card.querySelector(`[data-player-card-status="${seatIndex}"]`);
+  if (view.statusText) {
+    if (statusEl) {
+      statusEl.textContent = view.statusText;
+      statusEl.classList.toggle('player-card__status--thinking', view.isThinking);
+    }
+  } else if (statusEl) {
+    statusEl.remove();
+  }
+
+  const infoEl = card.querySelector('.player-card__info');
+  let playedEl = infoEl?.querySelector('[data-player-card-played]');
+  if (view.bestMove && !view.isThinking) {
+    if (!playedEl && infoEl) {
+      playedEl = document.createElement('div');
+      playedEl.className = 'player-card__bestmove';
+      playedEl.dataset.playerCardPlayed = '1';
+      infoEl.appendChild(playedEl);
+    }
+    if (playedEl) {
+      playedEl.innerHTML = `played <strong>${escHtml(view.bestMove)}</strong>`;
+    }
+  } else if (playedEl) {
+    playedEl.remove();
+  }
+
+  let pvEl = infoEl?.querySelector('[data-player-card-pv]');
+  if (view.livePvMove) {
+    if (!pvEl && infoEl) {
+      pvEl = document.createElement('div');
+      pvEl.className = 'player-card__bestmove';
+      pvEl.dataset.playerCardPv = '1';
+      infoEl.appendChild(pvEl);
+    }
+    if (pvEl) {
+      pvEl.innerHTML = `pv <strong>${escHtml(view.livePvMove)}</strong>`;
+    }
+  } else if (pvEl) {
+    pvEl.remove();
+  }
+
+  const statsEl = card.querySelector('.player-card__stats');
+  if (statsEl) {
+    const parts = [];
+    if (view.scoreDisplay) {
+      parts.push(
+        `<span class="player-card__score${view.isMate ? ' player-card__score--mate' : ''}">${escHtml(view.scoreDisplay)}</span>`,
+      );
+    }
+    if (view.depth != null) {
+      parts.push(
+        `<span class="player-card__stat"><span class="player-card__stat-label">d</span>${view.depth}</span>`,
+      );
+    }
+    if (view.nodes > 0) {
+      parts.push(
+        `<span class="player-card__stat"><span class="player-card__stat-label">n</span>${escHtml(formatNodes(view.nodes))}</span>`,
+      );
+    }
+    if (view.thinkMs != null) {
+      parts.push(`<span class="player-card__stat">${escHtml(formatMs(view.thinkMs))}</span>`);
+    }
+    statsEl.innerHTML = parts.join('');
+  }
+
+  const playBtn = card.querySelector('[data-action="play-now"]');
+  if (view.showPlayNow && !playBtn) {
+    const right = card.querySelector('.player-card__right');
+    const btn = document.createElement('button');
+    btn.className = 'btn btn--playnow';
+    btn.dataset.action = 'play-now';
+    btn.title = 'Stop search and play current best move';
+    btn.textContent = 'Play now';
+    btn.addEventListener('click', () => controller.playNow?.());
+    right?.appendChild(btn);
+  } else if (!view.showPlayNow && playBtn) {
+    playBtn.remove();
+  }
+
+  updatePawnSpinner(container, view.isThinking && !view.hasError, seatIndex);
+  return true;
+}
+
+function bindPlayerCardActions(container, state, seatIndex, controller) {
   container.querySelector('[data-action="play-now"]')?.addEventListener('click', () => {
     controller.playNow?.();
   });
@@ -305,4 +412,56 @@ export function renderPlayerCard(container, state, seatIndex, controller) {
         flashCopied();
       }
     });
+}
+
+export function renderPlayerCard(container, state, seatIndex, controller) {
+  const structureKey = playerCardStructureKey(state, seatIndex);
+  if (
+    container._playerCardStructureKey === structureKey &&
+    container.querySelector(`[data-player-card-seat="${seatIndex}"]`)
+  ) {
+    patchPlayerCardLive(container, state, seatIndex, controller);
+    return;
+  }
+
+  container._playerCardStructureKey = structureKey;
+  const view = derivePlayerCardView(state, seatIndex);
+
+  const spinner = container._pawnSpinner;
+  if (spinner) {
+    spinner.remove();
+  }
+
+  container.innerHTML = `
+    <div class="player-card player-card--seat${seatIndex}${view.isMyTurn ? ' player-card--active' : ''}${state.winner === seatIndex + 1 ? ' player-card--winner' : ''}" data-player-card-seat="${seatIndex}">
+      <div class="player-card__main">
+        <div class="player-card__left">
+          <div class="player-card__pawn pawn-icon pawn-icon--seat${seatIndex}">${
+            view.hasError
+              ? `<button type="button" class="pawn-icon__error" data-action="copy-engine-error" data-seat="${seatIndex}" title="Engine error — click to copy:&#10;${escAttr(view.engineError)}" aria-label="Engine error, click to copy">!</button>`
+              : ''
+          }</div>
+          <div class="player-card__info">
+            <div class="player-card__name">${escHtml(view.colorName)}</div>
+            <div class="player-card__config">${escHtml(view.configSummary)}</div>
+            ${view.statusText ? `<div class="player-card__status${view.isThinking ? ' player-card__status--thinking' : ''}" data-player-card-status="${seatIndex}">${escHtml(view.statusText)}</div>` : ''}
+            ${view.bestMove && !view.isThinking ? `<div class="player-card__bestmove" data-player-card-played="1">played <strong>${escHtml(view.bestMove)}</strong></div>` : ''}
+            ${view.livePvMove ? `<div class="player-card__bestmove" data-player-card-pv="1">pv <strong>${escHtml(view.livePvMove)}</strong></div>` : ''}
+          </div>
+        </div>
+        <div class="player-card__right">
+          <div class="player-card__stats">
+            ${view.scoreDisplay ? `<span class="player-card__score${view.isMate ? ' player-card__score--mate' : ''}">${escHtml(view.scoreDisplay)}</span>` : ''}
+            ${view.depth != null ? `<span class="player-card__stat"><span class="player-card__stat-label">d</span>${view.depth}</span>` : ''}
+            ${view.nodes > 0 ? `<span class="player-card__stat"><span class="player-card__stat-label">n</span>${escHtml(formatNodes(view.nodes))}</span>` : ''}
+            ${view.thinkMs != null ? `<span class="player-card__stat">${escHtml(formatMs(view.thinkMs))}</span>` : ''}
+          </div>
+          ${view.showPlayNow ? `<button class="btn btn--playnow" data-action="play-now" title="Stop search and play current best move">Play now</button>` : ''}
+        </div>
+      </div>
+    </div>
+  `;
+
+  updatePawnSpinner(container, view.isThinking && !view.hasError, seatIndex);
+  bindPlayerCardActions(container, state, seatIndex, controller);
 }

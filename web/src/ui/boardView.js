@@ -70,6 +70,35 @@ function liveGhostKey(state, validActions) {
   return resolveLiveBestMoveKey(state, { validActions }) ?? '';
 }
 
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+function createGhostWallRing(isHorizontal) {
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('class', 'ghost-pv-ring');
+  svg.setAttribute('viewBox', '0 0 100 100');
+  svg.setAttribute('preserveAspectRatio', 'none');
+  svg.setAttribute('aria-hidden', 'true');
+
+  const stroke = document.createElementNS(SVG_NS, 'rect');
+  stroke.setAttribute('class', 'ghost-pv-ring__stroke');
+  stroke.setAttribute('x', '3');
+  stroke.setAttribute('y', '3');
+  stroke.setAttribute('width', '94');
+  stroke.setAttribute('height', '94');
+  // Capsule ends — rx tracks the short axis after stretch.
+  stroke.setAttribute('rx', isHorizontal ? '47' : '47');
+  stroke.setAttribute('ry', isHorizontal ? '47' : '47');
+  stroke.setAttribute('pathLength', '100');
+  svg.appendChild(stroke);
+  return svg;
+}
+
+function clearGhostPawnHints(cellEls) {
+  cellEls.forEach((cell) => {
+    cell.classList.remove('ghost-pawn', 'ghost-pawn--player1', 'ghost-pawn--player2');
+  });
+}
+
 function addWallElement(boardEl, type, viewSlot, { preview, bad, ghost, owner }) {
   const el = document.createElement('div');
   el.className =
@@ -80,6 +109,12 @@ function addWallElement(boardEl, type, viewSlot, { preview, bad, ghost, owner })
     (ghost ? ' ghost-pv' : '');
   const { gr, gc, rowSpan, colSpan } = wallGridFromSlot(type, viewSlot);
   applyGridPos(el, gr, gc, rowSpan, colSpan);
+  if (ghost) {
+    const inner = document.createElement('div');
+    inner.className = 'ghost-pv-inner';
+    inner.appendChild(createGhostWallRing(type === 0));
+    el.appendChild(inner);
+  }
   boardEl.appendChild(el);
   return el;
 }
@@ -290,14 +325,13 @@ function syncBoardDom(dom, state, controller) {
   }
 
   cellEls.forEach((cell) => {
-    cell.classList.remove('hl', 'hl--player1', 'hl--player2', 'lastc', 'ghost-pawn', 'ghost-pawn--player1', 'ghost-pawn--player2');
-    cell.removeAttribute('data-action');
-  });
-  boardEl.querySelectorAll('.wallpiece.lastw, .wallpiece.ghost-pv').forEach((w) => {
-    w.classList.remove('lastw', 'ghost-pv');
-    if (w.classList.contains('preview')) {
-      w.remove();
+    cell.classList.remove('hl', 'hl--player1', 'hl--player2', 'lastc');
+    if (!cell.classList.contains('ghost-pawn')) {
+      cell.removeAttribute('data-action');
     }
+  });
+  boardEl.querySelectorAll('.wallpiece.lastw').forEach((w) => {
+    w.classList.remove('lastw');
   });
 
   if (lastKey) {
@@ -314,28 +348,37 @@ function syncBoardDom(dom, state, controller) {
   }
 
   const ghostKey = liveGhostKey(state, validActions);
-  const sideClass = state.playerToMove === 2 ? 'player2' : 'player1';
-  if (ghostKey && ghostKey !== lastKey) {
-    if (ghostKey.length === 2) {
-      const cell = viewMove(pawnCellFromCoordinate(parseAlgebraic(ghostKey).coordinate), isFlipped);
-      const el = cellEls[cell];
-      if (el) {
-        el.classList.add('ghost-pawn', `ghost-pawn--${sideClass}`);
-        el.dataset.action = ghostKey;
-      }
-    } else {
-      const move = algebraicToEngineMove(ghostKey);
-      if (move >= 100) {
-        const type = move < 200 ? 0 : 1;
-        const viewSlot = viewMove(move, isFlipped) % 100;
-        addWallElement(boardEl, type, viewSlot, {
-          preview: true,
-          bad: false,
-          ghost: true,
-          owner: state.playerToMove,
-        });
+  const thinkSeat = state.aiThinking ? state.thinkingSeatIndex : null;
+  const sideClass = thinkSeat === 1 ? 'player2' : 'player1';
+  const ghostIdentity = `${ghostKey}|${sideClass}`;
+  if (dom._ghostIdentity !== ghostIdentity) {
+    clearGhostPawnHints(cellEls);
+    dom._ghostWallEl?.remove();
+    dom._ghostWallEl = null;
+
+    if (ghostKey) {
+      if (ghostKey.length === 2) {
+        const cell = viewMove(pawnCellFromCoordinate(parseAlgebraic(ghostKey).coordinate), isFlipped);
+        const el = cellEls[cell];
+        if (el) {
+          el.classList.add('ghost-pawn', `ghost-pawn--${sideClass}`);
+          el.dataset.action = ghostKey;
+        }
+      } else {
+        const move = algebraicToEngineMove(ghostKey);
+        if (move >= 100) {
+          const type = move < 200 ? 0 : 1;
+          const viewSlot = viewMove(move, isFlipped) % 100;
+          dom._ghostWallEl = addWallElement(boardEl, type, viewSlot, {
+            preview: true,
+            bad: false,
+            ghost: true,
+            owner: state.playerToMove,
+          });
+        }
       }
     }
+    dom._ghostIdentity = ghostIdentity;
   }
 
   if (canInteract) {
