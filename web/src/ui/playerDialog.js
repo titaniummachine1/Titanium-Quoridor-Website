@@ -4,6 +4,7 @@
  * Engine-specific controls (not a generic difficulty system):
  *
  *   Remote (Ka / Ishtar):   Strength (Beg→Alpha) + thinking mode
+ *   zero.ink:               Thinking mode only (Immediate / Short / Medium / Long)
  *   Titanium:               NNUE weights (live/frozen) + thinking time slider
  *   ACE v13:                Tier selector (JS→Rust→MoveGen+) + time slider
  *   Gorisanson / QuoridorV3: Thinking time slider
@@ -326,6 +327,10 @@ function renderEngineControls(seat, selections) {
            renderTimeModeControls(seat, selections);
   }
 
+  if (cat === 'zeroink') {
+    return renderTimeModeControls(seat, selections);
+  }
+
   if (cat === 'titanium') {
     return renderTitaniumNetControls(seat, selections) +
            renderTimeSlider(seat, selections, 'Thinking time');
@@ -501,6 +506,12 @@ function buildAiSettings(playerType, selections, seat) {
     return {
       strengthLevel: selections.remoteStrength[seat] ?? StrengthLevel.Alpha,
       timeToMove:    selections.timeToMove[seat] ?? DEFAULT_TIME_TO_MOVE,
+    };
+  }
+
+  if (cat === 'zeroink') {
+    return {
+      timeToMove: selections.timeToMove[seat] ?? DEFAULT_TIME_TO_MOVE,
     };
   }
 

@@ -163,6 +163,20 @@ function renderPlayerAiSettings(ui, playerNum) {
       </div>`;
   }
 
+  if (ui.isZeroInk) {
+    return `
+      <div class="player-ai-settings" data-engine="${escapeHtml(engineName)}">
+        <p class="player-ai-settings__engine">${escapeHtml(engineName)}</p>
+        ${renderDiscreteSlider({
+      label: `Time · ${engineName}`,
+      settingName: 'time-to-move',
+      playerNum,
+      value: ui.timeToMove,
+      presets: TIME_TO_MOVE_PRESETS,
+    })}
+      </div>`;
+  }
+
   return `
     <div class="player-ai-settings" data-engine="${escapeHtml(engineName)}">
       <p class="player-ai-settings__engine">${escapeHtml(engineName)}</p>

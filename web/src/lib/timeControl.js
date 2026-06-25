@@ -188,11 +188,22 @@ export function getEngineConfig(playerType, engineConfigs) {
   return undefined;
 }
 
+export function isZeroInkEngine(playerType, engineConfigs) {
+  return (
+    playerType === PlayerType.ZeroInk ||
+    getEngineConfig(playerType, engineConfigs)?.kind === 'zeroink'
+  );
+}
+
 export function isRemoteEngine(playerType, engineConfigs) {
   const kind = getEngineConfig(playerType, engineConfigs)?.kind;
-  // zero.ink is a remote engine too — REST instead of WebSocket. It shares the
-  // cloud-engine settings UI (thinking-mode selector → per-engine `visits` map).
+  // zero.ink is remote but uses time presets only (no Beg→Alpha strength slider).
   return kind === 'remote' || kind === 'zeroink';
+}
+
+/** Ka / Ishtar cloud engines — strength + thinking mode. */
+export function isCloudRemoteEngine(playerType, engineConfigs) {
+  return isRemoteEngine(playerType, engineConfigs) && !isZeroInkEngine(playerType, engineConfigs);
 }
 
 export function isLocalEngine(playerType, engineConfigs) {
@@ -287,6 +298,11 @@ export function defaultPlayerAiSettings(playerType, engineConfigs) {
       visitsBudget: LOCAL_VISITS_RANGE.default,
     };
   }
+  if (isZeroInkEngine(playerType, engineConfigs)) {
+    return {
+      timeToMove: TimeToMove.Short,
+    };
+  }
   return {
     strengthLevel: StrengthLevel.Alpha,
     timeToMove: TimeToMove.Short,
@@ -363,7 +379,14 @@ export function describePlayerAiSettings(playerType, aiSettings, engineConfigs) 
     return `${config.name}: ${time} · ${cap}`;
   }
 
-  if (isRemoteEngine(playerType, engineConfigs) && config.visits) {
+  if (isZeroInkEngine(playerType, engineConfigs) && config?.visits) {
+    const timeMode = aiSettings.timeToMove ?? TimeToMove.Short;
+    const visits = config.visits[timeMode];
+    const time = timeToMoveLabel(timeMode);
+    return `${config.name}: ${time} (~${visits.toLocaleString()} visits)`;
+  }
+
+  if (isCloudRemoteEngine(playerType, engineConfigs) && config.visits) {
     const timeMode = aiSettings.timeToMove ?? TimeToMove.Short;
     const visits = config.visits[timeMode];
     const parallelism = config.settings?.parallelism?.[timeMode];

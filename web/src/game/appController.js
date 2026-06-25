@@ -165,6 +165,8 @@ import {
   isLocalEngine,
   isLocalMctsEngine,
   isRemoteEngine,
+  isZeroInkEngine,
+  isCloudRemoteEngine,
   isTitaniumEngine,
   isQuoridorV3Engine,
   isAceEngine,
@@ -193,6 +195,9 @@ function isSavedSettingsValid(playerType, saved, engineConfigs) {
   }
   if (isLocalEngine(playerType, engineConfigs)) {
     return saved.wallClockSeconds != null && saved.visitsBudget != null;
+  }
+  if (playerType === PlayerType.ZeroInk) {
+    return saved.timeToMove != null;
   }
   if (isRemoteEngine(playerType, engineConfigs)) {
     return saved.strengthLevel != null && saved.timeToMove != null;
@@ -642,6 +647,7 @@ export class AppController {
       isAceFamily: isAceFamily(playerType, this.engineConfigs),
       isLocalMcts: isLocalMctsEngine(playerType, this.engineConfigs),
       isRemote: isRemoteEngine(playerType, this.engineConfigs),
+      isZeroInk: isZeroInkEngine(playerType, this.engineConfigs),
       titaniumNet: current?.titaniumNet ?? TITANIUM_NET_LIVE,
       strengthLevel: isAceFamily(playerType, this.engineConfigs)
         ? clampAceV10Tier(migrateAceV10Strength(current?.strengthLevel ?? 0), playerType)
@@ -687,6 +693,15 @@ export class AppController {
         prevAi.visitsBudget !== nextAi.visitsBudget
       );
     }
+    if (isZeroInkEngine(playerType, this.engineConfigs)) {
+      return prevAi.timeToMove !== nextAi.timeToMove;
+    }
+    if (isCloudRemoteEngine(playerType, this.engineConfigs)) {
+      return (
+        prevAi.strengthLevel !== nextAi.strengthLevel ||
+        prevAi.timeToMove !== nextAi.timeToMove
+      );
+    }
     return false;
   }
 
@@ -722,8 +737,11 @@ export class AppController {
   setPlayerStrengthLevel(playerNum, strengthLevel, { silent = false } = {}) {
     const index = playerNum - 1;
     const playerType = this.settings.players[index];
+    if (isZeroInkEngine(playerType, this.engineConfigs)) {
+      return;
+    }
     if (
-      !isRemoteEngine(playerType, this.engineConfigs) &&
+      !isCloudRemoteEngine(playerType, this.engineConfigs) &&
       !isTitaniumEngine(playerType, this.engineConfigs) &&
       !isAceFamily(playerType, this.engineConfigs)
     ) {

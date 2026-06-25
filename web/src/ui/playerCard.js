@@ -92,7 +92,7 @@ export function compactPlayerConfigSummary(ui) {
 
   const engine = shortEngineName(ui.playerType);
 
-  if (ui.isRemote) {
+  if (ui.isRemote && !ui.isZeroInk) {
     const strength = expandStrengthLabel(
       STRENGTH_LEVEL_PRESETS.find((p) => p.id === (ui.strengthLevel ?? StrengthLevel.Alpha))?.label
         ?? 'Alpha',
@@ -100,6 +100,12 @@ export function compactPlayerConfigSummary(ui) {
     const time = TIME_TO_MOVE_PRESETS.find((p) => p.id === (ui.timeToMove ?? TimeToMove.Short))?.label
       ?? 'Short';
     return `${engine} · ${strength} · ${time}`;
+  }
+
+  if (ui.isZeroInk) {
+    const time = TIME_TO_MOVE_PRESETS.find((p) => p.id === (ui.timeToMove ?? TimeToMove.Short))?.label
+      ?? 'Short';
+    return `${engine} · ${time}`;
   }
 
   if (ui.isAceFamily) {
@@ -122,6 +128,7 @@ function shortEngineName(playerType) {
   }
   if (playerType === PlayerType.GorisansonMCTS) return 'Gorisanson';
   if (playerType === PlayerType.KaAI) return 'Ka';
+  if (playerType === PlayerType.ZeroInk) return 'zero.ink';
   if (playerType === PlayerType.IshtarV3 || playerType === PlayerType.IshtarPonder) return 'Ishtar';
   if (playerType === PlayerType.AceV10) return 'ACE v10';
   if (playerType === PlayerType.AceV13) return 'ACE v13';
