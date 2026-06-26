@@ -5,7 +5,7 @@
  *
  *   Remote (Ka / Ishtar):   Strength (Beg→Alpha) + thinking mode
  *   zero.ink:               Thinking mode only (Immediate / Short / Medium / Long)
- *   Titanium:               NNUE weights (live/frozen) + thinking time slider
+ *   Titanium:               Difficulty (Easy/Medium/Hard) + thinking time slider
  *   ACE v13:                Tier selector (JS→Rust→MoveGen+) + time slider
  *   Gorisanson / QuoridorV3: Thinking time slider
  *   Human:                  No controls
@@ -22,13 +22,17 @@ import {
   isTitaniumEngine,
   isAceFamily,
   STRENGTH_LEVEL_PRESETS,
-  TITANIUM_NET_LIVE,
-  TITANIUM_NET_FROZEN,
+  TITANIUM_NET_EASY,
+  TITANIUM_NET_MEDIUM,
+  TITANIUM_NET_HARD,
+  migrateTitaniumNet,
+  threadsSliderMax,
 } from '../lib/timeControl.js';
 
 const TITANIUM_NET_OPTIONS = [
-  { label: 'Live NNUE (v16)', id: TITANIUM_NET_LIVE },
-  { label: 'Frozen NNUE', id: TITANIUM_NET_FROZEN },
+  { label: 'Easy', id: TITANIUM_NET_EASY },
+  { label: 'Medium', id: TITANIUM_NET_MEDIUM },
+  { label: 'Hard', id: TITANIUM_NET_HARD },
 ];
 
 const PREFS_KEY = 'quoridor-player-prefs-v4';
@@ -49,9 +53,11 @@ const ACE_V13_TIERS = [
 const DEFAULT_WALL_CLOCK    = 5;
 const DEFAULT_TIME_TO_MOVE  = TimeToMove.Short;
 const DEFAULT_ACE_TIER      = 0;
+const DEFAULT_THREADS       = 1;
 const WALL_CLOCK_MIN        = 0.5;
 const WALL_CLOCK_MAX        = 60;
 const WALL_CLOCK_STEP       = 0.5;
+const THREADS_MIN           = 1;
 
 function escHtml(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -90,7 +96,8 @@ function loadPrefs(state) {
       timeToMove:  saved.timeToMove  ?? [DEFAULT_TIME_TO_MOVE, DEFAULT_TIME_TO_MOVE],
       aceStrength: saved.aceStrength ?? [DEFAULT_ACE_TIER, DEFAULT_ACE_TIER],
       remoteStrength: saved.remoteStrength ?? [StrengthLevel.Alpha, StrengthLevel.Alpha],
-      titaniumNet: saved.titaniumNet ?? [TITANIUM_NET_LIVE, TITANIUM_NET_LIVE],
+      titaniumNet: (saved.titaniumNet ?? [TITANIUM_NET_HARD, TITANIUM_NET_HARD]).map(migrateTitaniumNet),
+      threads: saved.threads ?? [DEFAULT_THREADS, DEFAULT_THREADS],
     };
   } catch {
     return {
@@ -99,7 +106,8 @@ function loadPrefs(state) {
       timeToMove:  [DEFAULT_TIME_TO_MOVE, DEFAULT_TIME_TO_MOVE],
       aceStrength: [DEFAULT_ACE_TIER, DEFAULT_ACE_TIER],
       remoteStrength: [StrengthLevel.Alpha, StrengthLevel.Alpha],
-      titaniumNet: [TITANIUM_NET_LIVE, TITANIUM_NET_LIVE],
+      titaniumNet: [TITANIUM_NET_HARD, TITANIUM_NET_HARD],
+      threads: [DEFAULT_THREADS, DEFAULT_THREADS],
     };
   }
 }
@@ -173,6 +181,7 @@ export function openPlayerDialog(state, controller, { mode = 'newgame' } = {}) {
     aceStrength: [...prefs.aceStrength],
     remoteStrength: [...prefs.remoteStrength],
     titaniumNet: [...prefs.titaniumNet],
+    threads: [...(prefs.threads ?? [DEFAULT_THREADS, DEFAULT_THREADS])],
   };
 
   const groups = getPlayerOptionGroups();
@@ -242,6 +251,7 @@ export function openPlayerDialog(state, controller, { mode = 'newgame' } = {}) {
       aceStrength: selections.aceStrength,
       remoteStrength: selections.remoteStrength,
       titaniumNet: selections.titaniumNet,
+      threads: selections.threads,
     });
     // Apply display toggles immediately via controller
     const bmHint = overlay.querySelector('[data-option="bestMoveHint"]')?.checked ?? true;
@@ -333,6 +343,7 @@ function renderEngineControls(seat, selections) {
 
   if (cat === 'titanium') {
     return renderTitaniumNetControls(seat, selections) +
+           renderThreadsSlider(seat, selections) +
            renderTimeSlider(seat, selections, 'Thinking time');
   }
 
@@ -362,7 +373,7 @@ function renderRemoteStrengthControls(seat, selections) {
 }
 
 function renderTitaniumNetControls(seat, selections) {
-  const current = selections.titaniumNet[seat] ?? TITANIUM_NET_LIVE;
+  const current = migrateTitaniumNet(selections.titaniumNet[seat] ?? TITANIUM_NET_HARD);
   const btns = TITANIUM_NET_OPTIONS.map((opt) =>
     '<button class="btn ' + (opt.id === current ? 'btn--primary' : 'btn--ghost') + ' btn--small btn--fit"' +
     ' data-ti-net-btn data-seat="' + seat + '" data-ti-net-id="' + opt.id + '">' +
@@ -371,7 +382,7 @@ function renderTitaniumNetControls(seat, selections) {
 
   return (
     '<div class="player-dialog__field">' +
-      '<label class="player-dialog__label">NNUE weights</label>' +
+      '<label class="player-dialog__label">Difficulty</label>' +
       '<div class="player-dialog__preset-group">' + btns + '</div>' +
     '</div>'
   );
@@ -406,6 +417,21 @@ function renderAceTierControls(seat, selections, playerType) {
     '<div class="player-dialog__field">' +
       '<label class="player-dialog__label">Engine tier</label>' +
       '<div class="player-dialog__preset-group">' + btns + '</div>' +
+    '</div>'
+  );
+}
+
+function renderThreadsSlider(seat, selections) {
+  const max = threadsSliderMax();
+  const t = Math.min(max, Math.max(THREADS_MIN, selections.threads[seat] ?? DEFAULT_THREADS));
+  selections.threads[seat] = t;
+  return (
+    '<div class="player-dialog__field">' +
+      '<label class="player-dialog__label">Search threads: ' +
+        '<span class="player-dialog__time-val" data-threads-label="' + seat + '">' + t + '</span>' +
+      '</label>' +
+      '<input type="range" class="player-dialog__time-slider" data-threads-slider="' + seat + '"' +
+      ' min="' + THREADS_MIN + '" max="' + max + '" step="1" value="' + t + '">' +
     '</div>'
   );
 }
@@ -487,6 +513,16 @@ function wireEngineControls(overlay, seat, selections) {
       if (label) label.textContent = formatTime(v);
     });
   }
+
+  const threadsSlider = host.querySelector('[data-threads-slider="' + seat + '"]');
+  const threadsLabel = host.querySelector('[data-threads-label="' + seat + '"]');
+  if (threadsSlider) {
+    threadsSlider.addEventListener('input', () => {
+      const v = Number(threadsSlider.value);
+      selections.threads[seat] = v;
+      if (threadsLabel) threadsLabel.textContent = String(v);
+    });
+  }
 }
 
 function rebuildEngineControls(overlay, seat, selections) {
@@ -517,9 +553,10 @@ function buildAiSettings(playerType, selections, seat) {
 
   if (cat === 'titanium') {
     return {
-      titaniumNet:      selections.titaniumNet[seat] ?? TITANIUM_NET_LIVE,
+      titaniumNet:      migrateTitaniumNet(selections.titaniumNet[seat] ?? TITANIUM_NET_HARD),
       wallClockSeconds: selections.wallClock[seat] ?? DEFAULT_WALL_CLOCK,
       visitsBudget:     0,
+      threads:          selections.threads[seat] ?? DEFAULT_THREADS,
     };
   }
 

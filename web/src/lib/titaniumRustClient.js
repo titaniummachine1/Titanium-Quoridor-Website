@@ -32,6 +32,7 @@ function formatEngineHttpError(data, status) {
 const AB_ENGINE_MODES = new Set([
   'minimax',
   'titanium-v15',
+  'titanium-v15-medium',
   'titanium-v15-frozen',
   'ace',
   'ace-v8-js',
@@ -198,10 +199,12 @@ export class TitaniumEngineClient {
     const timeSec = Math.max(0.5, Number(aiSettings?.wallClockSeconds) || 10);
     const maxBudget = clampVisits(aiSettings?.visitsBudget ?? LOCAL_VISITS_RANGE.default);
     const uct = uctFromStrengthLevel(aiSettings?.strengthLevel);
+    const threads = Math.max(1, Math.round(Number(aiSettings?.threads) || 1));
     const configured = this.config?.engineMode;
     const engineMode =
       configured === 'minimax' ||
       configured === 'titanium-v15' ||
+      configured === 'titanium-v15-medium' ||
       configured === 'titanium-v15-frozen' ||
       isAlphaBetaEngineMode(configured)
         ? configured
@@ -228,12 +231,18 @@ export class TitaniumEngineClient {
       maxBudget,
       uct,
       engineMode,
+      threads,
       started,
       isAlphaBeta: engineMode !== 'mcts' && isAlphaBetaEngineMode(engineMode),
     };
 
     if (engineMode !== 'mcts') {
-      this.startSessionGenmove(history, searchCtx);
+      // Warm session cannot pass --threads; one-shot genmove uses native LazySMP.
+      if (threads > 1) {
+        this.startOneShotGenmove(history, searchCtx);
+      } else {
+        this.startSessionGenmove(history, searchCtx);
+      }
     } else {
       this.startOneShotGenmove(history, searchCtx);
     }
@@ -309,6 +318,7 @@ export class TitaniumEngineClient {
         maxNodes: searchCtx.maxBudget,
         uct: searchCtx.uct,
         engine: engineMode,
+        threads: searchCtx.threads ?? 1,
         stream: true,
       }),
       signal,

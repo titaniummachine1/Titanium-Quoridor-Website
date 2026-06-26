@@ -31,7 +31,7 @@ const TITANIUM_ENGINE = {
   key: PlayerType.TitaniumMinimax,
   engineMode: 'titanium-v15',
   tooltip:
-    'Titanium v16 — epoch-3 live NNUE (or frozen baseline). Native via `npm run dev`; WASM on GitHub Pages',
+    'Titanium v16 — Easy / Medium / Hard difficulty tiers. Native via `npm run dev`; WASM on GitHub Pages',
 };
 
 const ZERO_INK_ENGINE = {
@@ -177,8 +177,9 @@ const SEARCH_STOP_LABELS = {
   'ace-v13-js': 'ACE v13 JS',
   'ace-v13': 'ACE v13 Rust',
   'ace-v13-ti': 'ACE v13 MoveGen+',
-  'titanium-v15': 'Titanium v16 live',
-  'titanium-v15-frozen': 'Titanium v16 frozen',
+  'titanium-v15': 'Titanium v16 hard',
+  'titanium-v15-medium': 'Titanium v16 medium',
+  'titanium-v15-frozen': 'Titanium v16 easy',
   zeroink: 'zero.ink',
   mcts: 'MCTS',
   hybrid: 'hybrid',
@@ -232,6 +233,8 @@ function buildSearchDepthHeader(header, { live }) {
     header.mode === 'ace-v13-ti' ||
     header.stoppedBy === 'titanium-v15' ||
     header.mode === 'titanium-v15' ||
+    header.stoppedBy === 'titanium-v15-medium' ||
+    header.mode === 'titanium-v15-medium' ||
     header.stoppedBy === 'titanium-v15-frozen' ||
     header.mode === 'titanium-v15-frozen' ||
     header.playerLabel?.includes('Titanium') ||

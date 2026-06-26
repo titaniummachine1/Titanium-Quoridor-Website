@@ -32,25 +32,52 @@ export const WALL_CLOCK_RANGE = {
   defaultSeconds: 10,
 };
 
-/** Live vs pinned NNUE weights for Titanium v15 (one engine entry in the UI). */
-export const TITANIUM_NET_LIVE = 'live';
-export const TITANIUM_NET_FROZEN = 'frozen';
+export const THREADS_HARD_MAX = 8;
+
+/** Max search threads for Titanium (capped by hardware concurrency). */
+export function threadsSliderMax() {
+  if (typeof navigator !== 'undefined' && navigator.hardwareConcurrency > 0) {
+    return Math.min(THREADS_HARD_MAX, navigator.hardwareConcurrency);
+  }
+  return Math.min(THREADS_HARD_MAX, 4);
+}
+
+/** Titanium difficulty tiers (NNUE weight sets). */
+export const TITANIUM_NET_EASY = 'easy';
+export const TITANIUM_NET_MEDIUM = 'medium';
+export const TITANIUM_NET_HARD = 'hard';
+
+/** @deprecated Use TITANIUM_NET_* — kept for saved-prefs migration. */
+export const TITANIUM_NET_LIVE = TITANIUM_NET_MEDIUM;
+export const TITANIUM_NET_FROZEN = TITANIUM_NET_EASY;
+
+export function migrateTitaniumNet(net) {
+  if (net === 'frozen' || net === TITANIUM_NET_EASY) return TITANIUM_NET_EASY;
+  if (net === 'live' || net === TITANIUM_NET_MEDIUM) return TITANIUM_NET_MEDIUM;
+  if (net === 'hard' || net === TITANIUM_NET_HARD) return TITANIUM_NET_HARD;
+  return TITANIUM_NET_HARD;
+}
 
 export function resolveTitaniumEngineMode(aiSettings, playerType, engineConfigs) {
   if (playerType === PlayerType.TitaniumV15Frozen) {
     return 'titanium-v15-frozen';
   }
   const config = getEngineConfig(playerType, engineConfigs);
-  const net = aiSettings?.titaniumNet ?? TITANIUM_NET_LIVE;
-  if (net === TITANIUM_NET_FROZEN || config?.engineMode === 'titanium-v15-frozen') {
+  const net = migrateTitaniumNet(aiSettings?.titaniumNet ?? TITANIUM_NET_HARD);
+  if (net === TITANIUM_NET_EASY || config?.engineMode === 'titanium-v15-frozen') {
     return 'titanium-v15-frozen';
+  }
+  if (net === TITANIUM_NET_MEDIUM || config?.engineMode === 'titanium-v15-medium') {
+    return 'titanium-v15-medium';
   }
   return config?.engineMode ?? 'titanium-v15';
 }
 
 export function titaniumNetLabel(aiSettings) {
-  const net = aiSettings?.titaniumNet ?? TITANIUM_NET_LIVE;
-  return net === TITANIUM_NET_FROZEN ? 'Frozen' : 'Live';
+  const net = migrateTitaniumNet(aiSettings?.titaniumNet ?? TITANIUM_NET_HARD);
+  if (net === TITANIUM_NET_EASY) return 'Easy';
+  if (net === TITANIUM_NET_MEDIUM) return 'Medium';
+  return 'Hard';
 }
 
 /** Default think budget for legacy Quoridor v3 client (removed from UI, kept for imports). */
@@ -275,9 +302,10 @@ export function defaultPlayerAiSettings(playerType, engineConfigs) {
   }
   if (isTitaniumEngine(playerType, engineConfigs)) {
     return {
-      titaniumNet: TITANIUM_NET_LIVE,
+      titaniumNet: TITANIUM_NET_HARD,
       wallClockSeconds: WALL_CLOCK_RANGE.defaultSeconds,
       visitsBudget: UNLIMITED_VISITS,
+      threads: 1,
     };
   }
   if (isQuoridorV3Engine(playerType, engineConfigs)) {
@@ -367,7 +395,12 @@ export function describePlayerAiSettings(playerType, aiSettings, engineConfigs) 
     if (isTitaniumEngine(playerType, engineConfigs)) {
       const net = titaniumNetLabel(aiSettings);
       const budgetLabel = 'nodes';
-      return `${config.name}: ${time} · ${cap} ${budgetLabel} · ${net} NNUE`;
+      const threads = Number(aiSettings.threads) || 1;
+      let text = `${config.name}: ${time} · ${cap} ${budgetLabel} · ${net} NNUE`;
+      if (threads > 1) {
+        text += ` · ${threads} threads`;
+      }
+      return text;
     }
     if (isQuoridorV3Engine(playerType, engineConfigs)) {
       const depthCap = formatMaxDepth(maxDepthFromVisitsBudget(aiSettings.visitsBudget));

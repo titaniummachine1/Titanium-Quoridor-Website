@@ -72,10 +72,10 @@ const tiSummary = compactPlayerConfigSummary({
   isTitanium: true,
   isLocalMcts: true,
   playerType: PlayerType.TitaniumMinimax,
-  titaniumNet: 'live',
+  titaniumNet: 'hard',
   wallClockSeconds: 3,
 });
-assert(tiSummary.includes('Titanium') && tiSummary.includes('Live') && tiSummary.includes('3'), tiSummary);
+assert(tiSummary.includes('Titanium') && tiSummary.includes('Hard') && tiSummary.includes('3'), tiSummary);
 
 assert(compactPlayerConfigSummary({ isHuman: true }) === 'Human', 'human summary');
 

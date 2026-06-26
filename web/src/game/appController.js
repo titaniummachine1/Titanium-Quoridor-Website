@@ -27,6 +27,11 @@ import { requestEngineMove } from '../engines/requestEngineMove.js';
 import { validateEngineResultIdentity } from '../engines/validateEngineResultIdentity.js';
 import { logAiRequestEvent } from '../engines/aiRequestLog.js';
 import { EngineBackendKind } from '../engines/engineBackend.js';
+import {
+  finishedGamePayload,
+  finishedGameSignature,
+  submitFinishedGame,
+} from '../lib/trainingSubmit.js';
 import { AceV10JsEngineClient } from '../lib/aceV10JsEngine.js';
 import { AceV13JsEngineClient } from '../lib/aceV13JsEngine.js';
 import { AceRustWasmEngineClient } from '../lib/aceRustWasmClient.js';
@@ -50,6 +55,14 @@ import {
   describeTimeBudget,
   describeActiveSearchInfo,
 } from '../lib/playerRegistry.js';
+
+const DEFAULT_CAT_VISION_SETTINGS = Object.freeze({
+  showSquares: true,
+  showWalls: true,
+  showNumbers: false,
+  squareOpacity: 1,
+  wallOpacity: 1,
+});
 
 function mergeDepthLogs(existing, incoming) {
   const byDepth = new Map((existing ?? []).map((entry) => [entry.depth, entry]));
@@ -176,8 +189,9 @@ import {
   normalizePlayerType,
   getEngineConfig,
   resolveTitaniumEngineMode,
-  TITANIUM_NET_FROZEN,
-  TITANIUM_NET_LIVE,
+  threadsSliderMax,
+  TITANIUM_NET_HARD,
+  migrateTitaniumNet,
 } from '../lib/timeControl.js';
 import { playerColorName } from '../lib/playerColors.js';
 import { ponderCandidateSlots } from '../lib/enginePonder.js';
@@ -232,6 +246,7 @@ export class AppController {
       displayRemainingWalls: true,
       displayEvalBar: true,
       showCatVision: false,
+      catVision: { ...DEFAULT_CAT_VISION_SETTINGS },
       showLmrVision: false,
       lmrVisionShallow: false,
       showBestMoveHint: true,
@@ -291,6 +306,7 @@ export class AppController {
     /** Serialize engine commits — concurrent applyEngineMove must not double-apply. */
     this._engineApplyChain = Promise.resolve();
     this._terminalOverlayDismissed = false;
+    this._submittedFinishedGames = new Set();
     this._lastDiagnostic = null;
     this.startupConfirmed = false;
     this._activeAiAbort = null;
@@ -533,6 +549,7 @@ export class AppController {
     for (const engine of this.engines.values()) {
       engine.resetConnection();
     }
+    this.handleCatPositionChanged();
     this.onChange?.();
     if (requestAi && !this.isFreePlayMode()) {
       this.maybeRequestAiMove();
@@ -587,9 +604,13 @@ export class AppController {
       if (isTitaniumEngine(playerType, this.engineConfigs) && !saved.titaniumNet) {
         saved = {
           ...saved,
-          titaniumNet: TITANIUM_NET_LIVE,
+          titaniumNet: migrateTitaniumNet(TITANIUM_NET_HARD),
           visitsBudget: saved.visitsBudget ?? 0,
+          threads: saved.threads ?? 1,
         };
+      }
+      if (isTitaniumEngine(playerType, this.engineConfigs) && saved.threads == null) {
+        saved = { ...saved, threads: 1 };
       }
       this.settings.playerAiSettings[index] = { ...saved };
       return;
@@ -648,7 +669,8 @@ export class AppController {
       isLocalMcts: isLocalMctsEngine(playerType, this.engineConfigs),
       isRemote: isRemoteEngine(playerType, this.engineConfigs),
       isZeroInk: isZeroInkEngine(playerType, this.engineConfigs),
-      titaniumNet: current?.titaniumNet ?? TITANIUM_NET_LIVE,
+      titaniumNet: migrateTitaniumNet(current?.titaniumNet ?? TITANIUM_NET_HARD),
+      threads: current?.threads ?? 1,
       strengthLevel: isAceFamily(playerType, this.engineConfigs)
         ? clampAceV10Tier(migrateAceV10Strength(current?.strengthLevel ?? 0), playerType)
         : (current?.strengthLevel ?? StrengthLevel.Alpha),
@@ -678,7 +700,8 @@ export class AppController {
       return (
         prevAi.wallClockSeconds !== nextAi.wallClockSeconds ||
         prevAi.titaniumNet !== nextAi.titaniumNet ||
-        prevAi.visitsBudget !== nextAi.visitsBudget
+        prevAi.visitsBudget !== nextAi.visitsBudget ||
+        prevAi.threads !== nextAi.threads
       );
     }
     if (isAceFamily(playerType, this.engineConfigs)) {
@@ -820,6 +843,24 @@ export class AppController {
     }
   }
 
+  setPlayerThreads(playerNum, threads, { silent = false } = {}) {
+    const index = playerNum - 1;
+    const playerType = this.settings.players[index];
+    if (!isTitaniumEngine(playerType, this.engineConfigs)) {
+      return;
+    }
+    const current = this.settings.playerAiSettings[index] ?? {};
+    const next = Math.max(1, Math.min(threadsSliderMax(), Number(threads) || 1));
+    this.recordSettingsChange(playerNum, 'threads', current.threads, next);
+    this.rememberPlayerAiSettings(playerNum, {
+      ...current,
+      threads: next,
+    });
+    if (!silent) {
+      this._afterLivePlayerSettingChange(playerNum, { rebindEngine: true });
+    }
+  }
+
   toggleRotateBoard() {
     this.settings.rotateBoard = !this.settings.rotateBoard;
     this.onChange?.();
@@ -858,6 +899,15 @@ export class AppController {
       this.catVizLoading = false;
       this.showCatHint = false;
     }
+    this.onChange?.();
+  }
+
+  updateCatVisionSettings(patch) {
+    this.settings.catVision = {
+      ...DEFAULT_CAT_VISION_SETTINGS,
+      ...(this.settings.catVision ?? {}),
+      ...(patch ?? {}),
+    };
     this.onChange?.();
   }
 
@@ -1136,6 +1186,15 @@ export class AppController {
     this._catMovesKey = null;
   }
 
+  handleCatPositionChanged() {
+    this._catFetchSeq += 1;
+    this._catMovesKey = null;
+    this.catViz = null;
+    this.catVizError = null;
+    this.catVizLoading = false;
+    this.scheduleCatRefresh();
+  }
+
   scheduleCatRefresh() {
     if (!this.settings.showCatVision || this.settings.uiMode === 'replay') {
       return;
@@ -1188,6 +1247,7 @@ export class AppController {
     this.moveThinkLog = [];
     this._illegalRetriesByPly = {};
     this.settingsChangelog = [];
+    this._submittedFinishedGames.clear();
     this.initialBudgetHint = describeTimeBudget(
       this.settings.players,
       this.settings.playerAiSettings,
@@ -1202,8 +1262,7 @@ export class AppController {
     this.eval = { score: 0.5, p1: 0.5, pv: [] };
     this._terminalOverlayDismissed = false;
     this.session.reset();
-    this.invalidateCatCache();
-    this.scheduleCatRefresh();
+    this.handleCatPositionChanged();
     this.onChange?.();
     this.maybeRequestAiMove();
   }
@@ -1240,8 +1299,7 @@ export class AppController {
     this.aiThinking = false;
     this.liveSearch = null;
     this.session.rebuildFromActions(actions);
-    this.invalidateCatCache();
-    this.scheduleCatRefresh();
+    this.handleCatPositionChanged();
     this.onChange?.();
   }
 
@@ -1423,6 +1481,8 @@ export class AppController {
       return;
     }
 
+    this.handleCatPositionChanged();
+    this.maybeSubmitFinishedGame();
     this.onChange?.();
     if (freePlay) {
       return;
@@ -1484,7 +1544,7 @@ export class AppController {
     if (!this.aiThinking) {
       this.lmrVizLive = null;
     }
-    this.scheduleCatRefresh();
+    this.handleCatPositionChanged();
     this.scheduleLmrRefresh();
     this.onChange?.();
   }
@@ -1528,10 +1588,15 @@ export class AppController {
       const ai = this.settings.playerAiSettings[seatIndex] ?? {};
       const playerType = this.settings.players[seatIndex];
       const engineMode = resolveTitaniumEngineMode(ai, playerType, this.engineConfigs);
-      const patched = { ...config, engineMode };
+      const patched = {
+        ...config,
+        engineMode,
+        threads: ai.threads ?? 1,
+      };
       if (useStaticEngineBackend()) {
         return new TitaniumWasmEngineClient(patched);
       }
+      // Dev: native binary (supports --threads via one-shot genmove when threads > 1).
       return new TitaniumEngineClient(patched, { seatId: this.engineSeatKey(seatIndex) });
     }
     return new EngineClient(config);
@@ -1574,7 +1639,8 @@ export class AppController {
     if (isTitaniumEngine(playerType, this.engineConfigs)) {
       const backend = useStaticEngineBackend() ? 'wasm' : 'native';
       const mode = resolveTitaniumEngineMode(ai, playerType, this.engineConfigs);
-      return `${playerType}|${backend}|${mode}`;
+      const threads = ai.threads ?? 1;
+      return `${playerType}|${backend}|${mode}|t${threads}`;
     }
     const kind = getEngineConfig(playerType, this.engineConfigs)?.kind ?? playerType;
     return `${playerType}|${kind}`;
@@ -1859,6 +1925,32 @@ export class AppController {
     }
     const config = getEngineConfig(playerType, this.engineConfigs);
     return config?.name ?? playerType;
+  }
+
+  maybeSubmitFinishedGame() {
+    if (this.replay || (this.session.winner == null && !this.session.isDraw)) {
+      return;
+    }
+    const payload = finishedGamePayload({
+      actions: this.session.actions,
+      winner: this.session.winner,
+      isDraw: this.session.isDraw,
+      players: [...this.settings.players],
+      playerAiSettings: this.settings.playerAiSettings.map((settings) =>
+        settings ? { ...settings } : null,
+      ),
+      engineLabels: [this.engineLabelForSeat(0), this.engineLabelForSeat(1)],
+      initialBudgetHint: this.initialBudgetHint,
+      moveThinkLog: this.moveThinkLog.map((entry) => ({ ...entry })),
+    });
+    const signature = finishedGameSignature(payload);
+    if (!payload || !signature || this._submittedFinishedGames.has(signature)) {
+      return;
+    }
+    this._submittedFinishedGames.add(signature);
+    void submitFinishedGame(payload).catch((err) => {
+      console.debug?.('finished-game training submit skipped', err);
+    });
   }
 
   /** @deprecated prefer engineLabelForSeat(seatIndex) when seat is known */
@@ -2388,6 +2480,7 @@ export class AppController {
     const applied = this.session.applyAction(action);
     this._suppressSessionNotify = false;
     if (applied) {
+      this.handleCatPositionChanged();
       const plyNum = this.session.actions.length;
       const si = siBeforeMove;
       const thinkMs = resolveThinkMs(si, this._thinkStartedAt);
@@ -2432,6 +2525,7 @@ export class AppController {
       });
     }
     if (this.session.winner != null || this.session.isDraw) {
+      this.maybeSubmitFinishedGame();
       this._cancelActiveAiSearch();
       this.stopAllPonders();
       this.engineErrors[seatIndex] = null;
