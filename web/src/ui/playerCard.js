@@ -235,6 +235,8 @@ function derivePlayerCardView(state, seatIndex) {
     }
   } else if (state.isDraw) {
     statusText = 'Draw';
+  } else if (isMyTurn && !isHuman && engineStatus === 'connecting') {
+    statusText = 'Loading engine…';
   } else if (isThinking) {
     statusText = 'Thinking…';
   } else if (isMyTurn && isHuman) {

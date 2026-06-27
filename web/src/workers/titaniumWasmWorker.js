@@ -4,6 +4,7 @@
  */
 
 import init, { WasmEngine } from '../wasm/titanium/titanium.js';
+import wasmUrl from '../wasm/titanium/titanium_bg.wasm?url';
 import buildMeta from '../wasm/titanium/build-meta.json';
 
 let initPromise = null;
@@ -16,7 +17,7 @@ function frozenForEngineMode(engineMode) {
 
 async function ensureInit() {
   if (!initPromise) {
-    initPromise = init();
+    initPromise = init({ module_or_path: wasmUrl });
   }
   await initPromise;
 }

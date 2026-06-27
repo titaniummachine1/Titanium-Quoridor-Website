@@ -98,6 +98,7 @@ assert(
   'titanium WASM uses shared search core resolver',
 );
 assert(tiWasmClient.includes('await this.initWorkers'), 'titanium WASM awaits worker init before search');
+assert(tiWasmWorker.includes('wasmUrl'), 'titanium WASM worker imports hashed wasm asset URL');
 assert(tiWasmWorker.includes('ensureInit'), 'titanium WASM worker defines wasm init helper');
 assert(aceWasmClient.includes('new AceRustWasmWorker()'), 'ace rust: own worker');
 

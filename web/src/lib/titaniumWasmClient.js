@@ -42,17 +42,25 @@ export class TitaniumWasmEngineClient {
   }
 
   /** Initialize WASM in each worker sequentially (avoids parallel cold-start traps on Pages). */
-  async initWorkers(engineMode = this.config?.engineMode ?? 'titanium-v15') {
+  async initWorkers(engineMode = this.config?.engineMode ?? 'titanium-v15', { timeoutMs = 60_000 } = {}) {
     this.ensureWorkers();
     const payloads = [];
     for (let workerId = 0; workerId < this.cores; workerId++) {
       if (this._workerReady.has(workerId)) {
         continue;
       }
-      const data = await new Promise((resolve, reject) => {
-        this._readyWaiters.set(workerId, { resolve, reject });
-        this.workers[workerId].postMessage({ op: 'init', engineMode, workerSlot: workerId });
-      });
+      const data = await Promise.race([
+        new Promise((resolve, reject) => {
+          this._readyWaiters.set(workerId, { resolve, reject });
+          this.workers[workerId].postMessage({ op: 'init', engineMode, workerSlot: workerId });
+        }),
+        new Promise((_, reject) => {
+          setTimeout(
+            () => reject(new Error('Titanium WASM init timed out loading engine binary')),
+            timeoutMs,
+          );
+        }),
+      ]);
       payloads.push(data);
     }
     return payloads;
@@ -424,7 +432,7 @@ export class TitaniumWasmEngineClient {
     const maxNodes = resolveMaxNodes(aiSettings?.visitsBudget ?? 0);
     const engineMode = this.config?.engineMode ?? 'titanium-v15';
 
-    this.setStatus('searching');
+    this.setStatus('connecting');
     this.ensureWorkers();
 
     if (this.pendingRequest) {
@@ -438,6 +446,7 @@ export class TitaniumWasmEngineClient {
       this.setStatus('error');
       throw err;
     }
+    this.setStatus('searching');
     const initMs = performance.now() - readyStart;
 
     const started = performance.now();
