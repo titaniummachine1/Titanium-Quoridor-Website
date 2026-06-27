@@ -17,6 +17,7 @@
 import { PlayerType, TimeToMove, StrengthLevel } from '../lib/engineConfig.js';
 import { getPlayerOptionGroups, getAllEngineConfigs } from '../lib/playerRegistry.js';
 import { playerColorName } from '../lib/playerColors.js';
+import { hasNativeTitaniumLazySmp } from '../lib/titaniumRuntime.js';
 import {
   isRemoteEngine,
   isTitaniumEngine,
@@ -63,6 +64,7 @@ const WALL_CLOCK_MIN        = 0.5;
 const WALL_CLOCK_MAX        = 60;
 const WALL_CLOCK_STEP       = 0.5;
 const CORES_MIN             = 1;
+const HAS_NATIVE_TITANIUM_LAZY_SMP = hasNativeTitaniumLazySmp();
 
 function escHtml(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -102,13 +104,15 @@ function loadPrefs(state) {
       aceStrength: saved.aceStrength ?? [DEFAULT_ACE_TIER, DEFAULT_ACE_TIER],
       remoteStrength: saved.remoteStrength ?? [StrengthLevel.Alpha, StrengthLevel.Alpha],
       titaniumNet: (saved.titaniumNet ?? [TITANIUM_NET_HARD, TITANIUM_NET_HARD]).map(migrateTitaniumNet),
-      cores: [0, 1].map((seat) =>
-        clampCores(
-          (Array.isArray(saved.cores) ? saved.cores[seat] : null) ??
-            (Array.isArray(saved.threads) ? saved.threads[seat] : null) ??
-            DEFAULT_CORES,
-        ),
-      ),
+      cores: HAS_NATIVE_TITANIUM_LAZY_SMP
+        ? [0, 1].map((seat) =>
+            clampCores(
+              (Array.isArray(saved.cores) ? saved.cores[seat] : null) ??
+                (Array.isArray(saved.threads) ? saved.threads[seat] : null) ??
+                DEFAULT_CORES,
+            ),
+          )
+        : [1, 1],
     };
   } catch {
     return {
@@ -118,7 +122,7 @@ function loadPrefs(state) {
       aceStrength: [DEFAULT_ACE_TIER, DEFAULT_ACE_TIER],
       remoteStrength: [StrengthLevel.Alpha, StrengthLevel.Alpha],
       titaniumNet: [TITANIUM_NET_HARD, TITANIUM_NET_HARD],
-      cores: [DEFAULT_CORES, DEFAULT_CORES],
+      cores: HAS_NATIVE_TITANIUM_LAZY_SMP ? [DEFAULT_CORES, DEFAULT_CORES] : [1, 1],
     };
   }
 }
@@ -192,7 +196,7 @@ export function openPlayerDialog(state, controller, { mode = 'newgame' } = {}) {
     aceStrength: [...prefs.aceStrength],
     remoteStrength: [...prefs.remoteStrength],
     titaniumNet: [...prefs.titaniumNet],
-    cores: [...(prefs.cores ?? [DEFAULT_CORES, DEFAULT_CORES])],
+    cores: HAS_NATIVE_TITANIUM_LAZY_SMP ? [...(prefs.cores ?? [DEFAULT_CORES, DEFAULT_CORES])] : [1, 1],
   };
 
   const groups = getPlayerOptionGroups();
@@ -354,7 +358,7 @@ function renderEngineControls(seat, selections) {
 
   if (cat === 'titanium') {
     return renderTitaniumNetControls(seat, selections) +
-           renderCoresSlider(seat, selections) +
+           (HAS_NATIVE_TITANIUM_LAZY_SMP ? renderCoresSlider(seat, selections) : '') +
            renderTimeSlider(seat, selections, 'Thinking time');
   }
 
@@ -572,7 +576,9 @@ function buildAiSettings(playerType, selections, seat) {
       titaniumNet:      migrateTitaniumNet(selections.titaniumNet[seat] ?? TITANIUM_NET_HARD),
       wallClockSeconds: selections.wallClock[seat] ?? DEFAULT_WALL_CLOCK,
       visitsBudget:     0,
-      cores:            clampCores(selections.cores[seat] ?? DEFAULT_CORES),
+      cores:            HAS_NATIVE_TITANIUM_LAZY_SMP
+        ? clampCores(selections.cores[seat] ?? DEFAULT_CORES)
+        : 1,
     };
   }
 

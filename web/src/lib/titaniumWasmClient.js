@@ -6,14 +6,15 @@
 
 import TitaniumWasmWorker from '../workers/titaniumWasmWorker.js?worker';
 import { parseAlgebraic, toAlgebraic } from './gameLogic.js';
-import { resolveMaxNodes, resolveCores } from './timeControl.js';
+import { resolveMaxNodes } from './timeControl.js';
+import { resolveTitaniumSearchCores } from './titaniumRuntime.js';
 import { enrichNodeFields } from './searchNodes.js';
 import { setRustIdentityFromWasm } from './wasmBuildInfo.js';
 
 export class TitaniumWasmEngineClient {
   constructor(engineConfig) {
     this.config = engineConfig;
-    this.cores = resolveCores({ cores: engineConfig?.cores });
+    this.cores = resolveTitaniumSearchCores({ cores: engineConfig?.cores });
     /** @type {Worker[]} */
     this.workers = [];
     /** @type {Map<number, { resolve: Function, reject: Function }>} */
@@ -380,7 +381,7 @@ export class TitaniumWasmEngineClient {
       this.algebraicMoves = moveHistory.map(toAlgebraic);
     }
 
-    this.cores = resolveCores(aiSettings);
+    this.cores = resolveTitaniumSearchCores(aiSettings);
 
     const timeMs = Math.round((aiSettings?.wallClockSeconds ?? 10) * 1000);
     const maxNodes = resolveMaxNodes(aiSettings?.visitsBudget ?? 0);

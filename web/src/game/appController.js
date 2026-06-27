@@ -191,7 +191,7 @@ import {
   loadPersistedPlaySettings,
   savePersistedPlaySettings,
 } from '../lib/persistedPlaySettings.js';
-import { hasNativeTitaniumLazySmp } from '../lib/titaniumRuntime.js';
+import { hasNativeTitaniumLazySmp, resolveTitaniumSearchCores } from '../lib/titaniumRuntime.js';
 
 const HAS_NATIVE_TITANIUM_LAZY_SMP = hasNativeTitaniumLazySmp();
 
@@ -654,7 +654,7 @@ export class AppController {
     const current = this.settings.playerAiSettings[index];
     const isTitanium = isTitaniumEngine(playerType, this.engineConfigs);
     const hasNativeTitaniumLazySmp = isTitanium && HAS_NATIVE_TITANIUM_LAZY_SMP;
-    const cores = resolveCores(current);
+    const cores = isTitanium ? resolveTitaniumSearchCores(current) : resolveCores(current);
 
     return {
       playerNum,
@@ -1598,7 +1598,7 @@ export class AppController {
       const patched = {
         ...config,
         engineMode,
-        cores: resolveCores(ai),
+        cores: resolveTitaniumSearchCores(ai),
       };
       return HAS_NATIVE_TITANIUM_LAZY_SMP
         ? new TitaniumEngineClient(patched, { seatId: `seat-${seatIndex}` })
@@ -1640,7 +1640,7 @@ export class AppController {
     if (isTitaniumEngine(playerType, this.engineConfigs)) {
       const backend = HAS_NATIVE_TITANIUM_LAZY_SMP ? 'native' : 'wasm';
       const mode = resolveTitaniumEngineMode(ai, playerType, this.engineConfigs);
-      const cores = `|c${resolveCores(ai)}`;
+      const cores = `|c${resolveTitaniumSearchCores(ai)}`;
       return `${playerType}|${backend}|${mode}${cores}`;
     }
     const kind = getEngineConfig(playerType, this.engineConfigs)?.kind ?? playerType;

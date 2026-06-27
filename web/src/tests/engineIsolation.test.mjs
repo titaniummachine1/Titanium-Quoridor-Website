@@ -88,7 +88,7 @@ assert(
 console.log('\n[isolate] WASM workers — dedicated Worker per engine client');
 const tiWasmClient = readSrc('lib/titaniumWasmClient.js');
 const aceWasmClient = readSrc('lib/aceRustWasmClient.js');
-assert(tiWasmClient.includes('resolveCores'), 'titanium WASM uses configured core count');
+assert(tiWasmClient.includes('resolveTitaniumSearchCores'), 'titanium WASM uses runtime core resolver');
 assert(aceWasmClient.includes('new AceRustWasmWorker()'), 'ace rust: own worker');
 
 console.log('\n[isolate] ACE v13 tiers are not Titanium live NNUE in engine routing');
