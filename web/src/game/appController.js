@@ -215,7 +215,7 @@ import {
   savePersistedPlaySettings,
 } from '../lib/persistedPlaySettings.js';
 
-const HAS_NATIVE_TITANIUM_LAZY_SMP = Boolean(import.meta.env?.DEV);
+const HAS_NATIVE_TITANIUM_LAZY_SMP = import.meta.env?.VITE_TITANIUM_NATIVE_PROXY === '1';
 
 function isSavedSettingsValid(playerType, saved, engineConfigs) {
   if (isTitaniumEngine(playerType, engineConfigs)) {

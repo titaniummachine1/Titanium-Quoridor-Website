@@ -27,15 +27,15 @@ const DEFAULT_HOT_CM = 160;
 const DEFAULT_MAX_CM = 240;
 
 // Fixed normalized position of the hot threshold on the color ramp.
-// cold → 0, hot → 0.65, max → 1. Piecewise-linear with engine-true anchors:
+// cold → 0, hot → 0.55, max → 1. Piecewise-linear with engine-true anchors:
 // the same cm value ALWAYS renders the same color, and crossing CAT_HOT_CM
 // (tactical / no-LMR) is always the same visual jump regardless of maxCm.
-const HOT_ANCHOR_T = 0.65;
+const HOT_ANCHOR_T = 0.55;
 
 /**
- * Engine-true heat → normalized 0..1 ramp position. Anchored to the engine's
- * own thresholds (coldCm LMR cutoff, hotCm tactical cutoff, maxCm ceiling) —
- * never per-position normalization.
+ * Engine-true heat → normalized 0..1 ramp position. The UI can pass `coldCm: 0`
+ * to show every positive impact while still anchoring red to the engine hot/max
+ * thresholds. This is never per-position normalization.
  */
 export function catHeatT(heat, scale = {}) {
   const coldCm = scale.coldCm ?? DEFAULT_COLD_CM;
@@ -51,8 +51,8 @@ export function catHeatT(heat, scale = {}) {
 }
 
 /**
- * Engine-true heat → color. Below `coldCm` (LMR fringe) there is no tint —
- * the raw cm value is still available in the hover title / optional debug labels.
+ * Engine-true heat → color. Positive heat can be rendered faintly; callers decide
+ * the visual baseline with `scale.coldCm`.
  *
  * @returns {{ fill: string, opacity: number } | null}
  */
@@ -64,17 +64,16 @@ export function catSquareOverlay(heat, reachable, scale = {}) {
     return null;
   }
   const coldCm = scale.coldCm ?? DEFAULT_COLD_CM;
-  // Below CAT_COLD_CM: search treats as cold fringe (extra LMR) — no board tint.
   if (heat < coldCm) {
     return null;
   }
   const t = catHeatT(heat, scale);
   // Yellow (55°) → orange → red (0°); alpha ramps so even the coolest warm
   // square reads against the background instead of vanishing into it.
-  const hue = Math.round(55 * (1 - t));
-  const sat = Math.round(88 + 8 * t);
-  const light = Math.round(56 - 8 * t);
-  const alpha = Math.min(0.62, 0.3 + 0.28 * t);
+  const hue = Math.round(58 * (1 - t));
+  const sat = Math.round(82 + 12 * t);
+  const light = Math.round(58 - 10 * t);
+  const alpha = Math.min(0.58, 0.16 + 0.34 * t);
   return {
     fill: `hsla(${hue}, ${sat}%, ${light}%, ${alpha.toFixed(2)})`,
     opacity: 1,

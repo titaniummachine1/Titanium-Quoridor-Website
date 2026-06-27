@@ -42,7 +42,7 @@ assert(
   'per-seat teardown',
 );
 
-console.log('\n[isolate] Titanium dev/native and static/WASM routing');
+console.log('\n[isolate] Titanium native opt-in and static/WASM routing');
 const viteSrc = readSrc('../vite.config.js');
 const proxySrc = readSrc('../vite-titanium-proxy.mjs');
 assert(viteSrc.includes('titaniumProxyPlugin'), 'dev server exposes native titanium proxy');
@@ -51,8 +51,12 @@ assert(
   'native Lazy SMP routing flag exists',
 );
 assert(
+  controllerSrc.includes("VITE_TITANIUM_NATIVE_PROXY === '1'"),
+  'native Titanium proxy is explicit opt-in, not automatic dev routing',
+);
+assert(
   controllerSrc.includes('TitaniumEngineClient'),
-  'appController can use native titanium client in dev',
+  'appController can still use native titanium client when opted in',
 );
 assert(
   controllerSrc.includes('TitaniumWasmEngineClient'),

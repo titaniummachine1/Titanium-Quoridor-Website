@@ -150,7 +150,7 @@ function addCatWallHeat(dom, boardEl, type, viewSlot, entry, scale, visual) {
   const direct = Number(entry.directHeat ?? heat) || 0;
   const counter = Math.max(0, heat - direct);
   const detail = counter > 0 ? ` · counter +${Math.round(counter)}cm` : '';
-  el.title = `${heat}cm${detail}${entry.search ? ' searchable' : ' skipped'}`;
+  el.title = `${heat}cm${detail}${entry.skip ? ' skipped' : ' impact'}`;
   const { gr, gc, rowSpan, colSpan } = wallGridFromSlot(type, viewSlot);
   applyGridPos(el, gr, gc, rowSpan, colSpan);
   boardEl.appendChild(el);
@@ -165,7 +165,7 @@ function renderCatVision(dom, state) {
   const viz = state.catViz;
   const visual = resolveCatVisualSettings(state);
   const scale = {
-    coldCm: viz.coldCm,
+    coldCm: 0,
     hotCm: viz.hotCm,
     maxCm: viz.maxCm,
   };
@@ -200,7 +200,7 @@ function renderCatVision(dom, state) {
   if (visual.showWalls) {
     for (const [alg, entry] of viz.wallIndex ?? []) {
       const heat = Number(entry.heat) || 0;
-      if (!entry.attention && heat < (scale.hotCm ?? 160)) {
+      if (heat <= 0) {
         continue;
       }
       const move = algebraicToEngineMove(alg);
