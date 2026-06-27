@@ -10,24 +10,15 @@ let initPromise = null;
 /** @type {Map<string, import('../wasm/titanium/titanium.js').WasmEngine>} */
 const engines = new Map();
 
-function tierForEngineMode(engineMode) {
-  if (engineMode === 'titanium-v15-frozen') return 0;
-  if (engineMode === 'titanium-v15-medium') return 1;
-  return 2;
-}
-
-async function ensureInit() {
-  if (!initPromise) {
-    initPromise = init();
-  }
-  await initPromise;
+function frozenForEngineMode(engineMode) {
+  return engineMode === 'titanium-v15-frozen';
 }
 
 async function ensureEngine(engineMode = 'titanium-v15') {
   await ensureInit();
-  const tier = tierForEngineMode(engineMode);
+  const frozen = frozenForEngineMode(engineMode);
   if (!engines.has(engineMode)) {
-    engines.set(engineMode, new WasmEngine(tier));
+    engines.set(engineMode, new WasmEngine(frozen));
   }
   return engines.get(engineMode);
 }

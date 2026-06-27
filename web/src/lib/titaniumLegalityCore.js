@@ -6,6 +6,7 @@
  */
 
 import { WasmEngine } from '../wasm/titanium/titanium.js';
+import { parseAlgebraic, QuoridorBoard, toAlgebraic } from './gameLogic.js';
 
 export const ORACLE_SOURCE = 'titanium-wasm-legality';
 export const INVALID_TITANIUM_POSITION_CODE = 'INVALID_TITANIUM_POSITION';
@@ -18,7 +19,7 @@ function invalidPositionError(message, cause) {
 
 export function enumerateTitaniumLegalMoves(historyTokens) {
   const history = historyTokens.map(String);
-  const engine = new WasmEngine(2);
+  const engine = new WasmEngine(false);
   engine.reset();
 
   if (history.length > 0) {
@@ -35,11 +36,23 @@ export function enumerateTitaniumLegalMoves(historyTokens) {
     }
   }
 
-  const raw = engine.legal_moves_current();
-  if (typeof raw !== 'string') {
-    throw new Error('legal_moves_current returned non-string');
+  if (typeof engine.legal_moves_current === 'function') {
+    const raw = engine.legal_moves_current();
+    if (typeof raw !== 'string') {
+      throw new Error('legal_moves_current returned non-string');
+    }
+    return raw.length > 0 ? raw.split(' ') : [];
   }
-  return raw.length > 0 ? raw.split(' ') : [];
+
+  return enumerateBoardLegalMoves(history);
+}
+
+function enumerateBoardLegalMoves(historyTokens) {
+  const board = new QuoridorBoard();
+  for (const token of historyTokens) {
+    board.takeAction(parseAlgebraic(String(token)));
+  }
+  return board.validActions().map((action) => toAlgebraic(action));
 }
 
 export function assertEnumerationPreservesPosition(historyTokens) {
