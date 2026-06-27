@@ -27,14 +27,14 @@ const DEFAULT_HOT_CM = 160;
 const DEFAULT_MAX_CM = 240;
 
 // Fixed normalized position of the hot threshold on the color ramp.
-// cold → 0, hot → 0.55, max → 1. Piecewise-linear with engine-true anchors:
-// the same cm value ALWAYS renders the same color, and crossing CAT_HOT_CM
-// (tactical / no-LMR) is always the same visual jump regardless of maxCm.
+// The caller chooses the scale; boardView uses current-position maxima so the
+// strongest visible CAT scores in this position actually pop.
+
 const HOT_ANCHOR_T = 0.55;
 
 function heatColorParts(heat, scale = {}) {
   const t = catHeatT(heat, scale);
-  const colorT = Math.pow(t, 0.92);
+  const colorT = Math.pow(t, 0.8);
   const hue = Math.round(58 * (1 - colorT));
   const sat = Math.round(76 + 18 * colorT);
   const light = Math.round(62 - 14 * colorT);
@@ -42,9 +42,9 @@ function heatColorParts(heat, scale = {}) {
 }
 
 /**
- * Engine-true heat → normalized 0..1 ramp position. The UI can pass `coldCm: 0`
- * to show every positive impact while still anchoring red to the engine hot/max
- * thresholds. This is never per-position normalization.
+ * CAT heat -> normalized 0..1 ramp position. The UI can pass `coldCm: 0`
+ * to show every positive impact while choosing whether the max is fixed or
+ * current-position relative.
  */
 export function catHeatT(heat, scale = {}) {
   const coldCm = scale.coldCm ?? DEFAULT_COLD_CM;
@@ -59,12 +59,7 @@ export function catHeatT(heat, scale = {}) {
   return HOT_ANCHOR_T * ((heat - coldCm) / (hotCm - coldCm));
 }
 
-/**
- * Engine-true heat → color. Positive heat can be rendered faintly; callers decide
- * the visual baseline with `scale.coldCm`.
- *
- * @returns {{ fill: string, opacity: number } | null}
- */
+/** CAT heat -> color. Positive heat can be rendered faintly; callers choose the scale. */
 export function catSquareOverlay(heat, reachable, scale = {}) {
   if (isSquareSkipped(reachable)) {
     return null;
@@ -79,7 +74,7 @@ export function catSquareOverlay(heat, reachable, scale = {}) {
   const { t, hue, sat, light } = heatColorParts(heat, scale);
   // Yellow (55°) → orange → red (0°); alpha ramps so even the coolest warm
   // square reads against the background instead of vanishing into it.
-  const alpha = Math.min(0.58, 0.035 + 0.5 * Math.pow(t, 1.18));
+  const alpha = Math.min(0.7, 0.1 + 0.58 * Math.pow(t, 0.9));
   return {
     fill: `hsla(${hue}, ${sat}%, ${light}%, ${alpha.toFixed(2)})`,
     opacity: 1,
@@ -102,8 +97,8 @@ export function catWallOverlay(heat, scale = {}) {
     };
   }
   const { t, hue, sat, light } = heatColorParts(heat, scale);
-  const fillAlpha = Math.min(0.68, 0.035 + 0.58 * Math.pow(t, 1.4));
-  const glowAlpha = Math.min(0.42, 0.02 + 0.34 * Math.pow(t, 1.55));
+  const fillAlpha = Math.min(0.76, 0.08 + 0.66 * Math.pow(t, 0.95));
+  const glowAlpha = Math.min(0.48, 0.035 + 0.4 * Math.pow(t, 1.05));
   return {
     fill: `hsla(${hue}, ${sat}%, ${light}%, ${fillAlpha.toFixed(2)})`,
     glow: `hsla(${hue}, ${sat}%, ${light}%, ${glowAlpha.toFixed(2)})`,

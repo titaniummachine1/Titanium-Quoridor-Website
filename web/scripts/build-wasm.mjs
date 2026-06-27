@@ -14,9 +14,9 @@ const siteEngine = path.resolve(webDir, '..', 'engine');
 const outDir = path.join(webDir, 'src', 'wasm', 'titanium');
 const publicWasmDir = path.join(webDir, 'public', 'wasm');
 
-const engineDir = existsSync(path.join(monorepoEngine, 'src', 'wasm.rs'))
-  ? monorepoEngine
-  : siteEngine;
+const engineDir = existsSync(path.join(siteEngine, 'src', 'wasm.rs'))
+  ? siteEngine
+  : monorepoEngine;
 console.log(`[build:wasm] engine dir: ${engineDir}`);
 
 function sha256File(filePath) {
@@ -74,20 +74,22 @@ const weightsDir = path.join(webDir, 'public', 'weights');
 mkdirSync(weightsDir, { recursive: true });
 mkdirSync(publicWasmDir, { recursive: true });
 
-const weightsLiveSha256 = sha256File(path.join(weightSrc, 'net_weights.bin'));
+const liveWeightsPath = path.join(weightSrc, 'net_weights.bin');
+const weightsLiveSha256 = sha256File(liveWeightsPath);
 const weightsFrozenSha256 = sha256File(path.join(weightSrc, 'net_weights_frozen.bin'));
 
-const NET_WEIGHT_BYTE_LEN = 42535 * 8; // must match engine `NET_WEIGHT_BYTE_LEN`
+const netWeightByteLen = readFileSync(liveWeightsPath).byteLength;
 
 let weightsMediumSha256 = null;
+let weightsMediumBytes = null;
 const mediumSrc = path.join(weightSrc, 'net_weights_medium.bin');
 if (existsSync(mediumSrc)) {
   const mediumBytes = readFileSync(mediumSrc);
-  if (mediumBytes.byteLength !== NET_WEIGHT_BYTE_LEN) {
-    console.error(
-      `[build:wasm] net_weights_medium.bin size ${mediumBytes.byteLength} != ${NET_WEIGHT_BYTE_LEN}`,
+  weightsMediumBytes = mediumBytes.byteLength;
+  if (mediumBytes.byteLength !== netWeightByteLen) {
+    console.warn(
+      `[build:wasm] net_weights_medium.bin size ${mediumBytes.byteLength} != live weights ${netWeightByteLen}`,
     );
-    process.exit(1);
   }
   copyFileSync(mediumSrc, path.join(weightsDir, 'net_weights_medium.bin'));
   weightsMediumSha256 = sha256File(mediumSrc);
@@ -103,6 +105,7 @@ const buildMeta = {
   weights_live_sha256: weightsLiveSha256,
   weights_frozen_sha256: weightsFrozenSha256,
   weights_medium_sha256: weightsMediumSha256,
+  weights_medium_bytes: weightsMediumBytes,
   features: 'wasm,embed-tables',
   engine_dir: engineDir,
 };

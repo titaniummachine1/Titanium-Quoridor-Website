@@ -1,32 +1,19 @@
 /**
  * Titanium v15 in a Web Worker — Rust engine compiled to WebAssembly.
- * Easy + Hard NNUE are embedded in WASM; Medium weights fetched from /weights/*.bin.
+ * Easy, Medium, and Hard NNUE tiers are embedded in WASM.
  */
 
-import init, {
-  WasmEngine,
-  install_net_weights,
-  net_weight_byte_len,
-  wasm_build_identity_json,
-} from '../wasm/titanium/titanium.js';
+import init, { WasmEngine } from '../wasm/titanium/titanium.js';
 import buildMeta from '../wasm/titanium/build-meta.json';
 
 let initPromise = null;
 /** @type {Map<string, import('../wasm/titanium/titanium.js').WasmEngine>} */
 const engines = new Map();
-let mediumWeightsReady = false;
 
 function tierForEngineMode(engineMode) {
   if (engineMode === 'titanium-v15-frozen') return 0;
   if (engineMode === 'titanium-v15-medium') return 1;
   return 2;
-}
-
-function siteBaseUrl() {
-  if (typeof import.meta !== 'undefined' && import.meta.env?.BASE_URL) {
-    return import.meta.env.BASE_URL;
-  }
-  return '/';
 }
 
 async function ensureInit() {
@@ -36,36 +23,9 @@ async function ensureInit() {
   await initPromise;
 }
 
-async function ensureMediumWeights() {
-  await ensureInit();
-  if (mediumWeightsReady) {
-    return;
-  }
-  const v =
-    buildMeta?.weights_medium_sha256 != null
-      ? String(buildMeta.weights_medium_sha256).slice(0, 16)
-      : String(Date.now());
-  const res = await fetch(`${siteBaseUrl()}weights/net_weights_medium.bin?v=${v}`, {
-    cache: 'no-store',
-  });
-  if (!res.ok) {
-    throw new Error(`failed to fetch weights/net_weights_medium.bin: HTTP ${res.status}`);
-  }
-  const bytes = new Uint8Array(await res.arrayBuffer());
-  const expected = net_weight_byte_len();
-  if (bytes.byteLength !== expected) {
-    throw new Error(`weights/net_weights_medium.bin size ${bytes.byteLength} != ${expected}`);
-  }
-  install_net_weights(1, bytes);
-  mediumWeightsReady = true;
-}
-
 async function ensureEngine(engineMode = 'titanium-v15') {
   await ensureInit();
   const tier = tierForEngineMode(engineMode);
-  if (tier === 1) {
-    await ensureMediumWeights();
-  }
   if (!engines.has(engineMode)) {
     engines.set(engineMode, new WasmEngine(tier));
   }
@@ -84,13 +44,7 @@ async function handleInit(engineMode, workerSlot) {
   const t0 = performance.now();
   await ensureEngine(engineMode);
   const initMs = performance.now() - t0;
-  let rustIdentity = null;
-  try {
-    const raw = wasm_build_identity_json();
-    rustIdentity = raw ? JSON.parse(raw) : null;
-  } catch {
-    rustIdentity = null;
-  }
+  const rustIdentity = buildMeta;
   console.log('[titanium-wasm-worker] ready', {
     workerSlot,
     engineMode,

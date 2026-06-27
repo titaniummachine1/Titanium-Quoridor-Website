@@ -137,6 +137,28 @@ function resolveCatVisualSettings(state) {
   };
 }
 
+function catPaintScale(values, fallback = {}) {
+  let maxHeat = 0;
+  for (const value of values ?? []) {
+    const heat = Number(value) || 0;
+    if (heat > maxHeat) {
+      maxHeat = heat;
+    }
+  }
+  if (maxHeat <= 0) {
+    return {
+      coldCm: 0,
+      hotCm: fallback.hotCm ?? 1,
+      maxCm: fallback.maxCm ?? 2,
+    };
+  }
+  return {
+    coldCm: 0,
+    hotCm: Math.max(1, maxHeat * 0.45),
+    maxCm: Math.max(2, maxHeat),
+  };
+}
+
 function addCatWallHeat(dom, boardEl, type, viewSlot, entry, scale, visual) {
   const el = document.createElement('div');
   el.className = 'cat-move-ghost cat-move-ghost--wall ' + (type === 0 ? 'wallpiece--h' : 'wallpiece--v');
@@ -166,11 +188,11 @@ function renderCatVision(dom, state) {
   }
   const viz = state.catViz;
   const visual = resolveCatVisualSettings(state);
-  const scale = {
-    coldCm: 0,
-    hotCm: viz.hotCm,
-    maxCm: viz.maxCm,
-  };
+  const squareScale = catPaintScale(viz.squares, viz);
+  const wallScale = catPaintScale(
+    [...(viz.wallIndex?.values?.() ?? [])].map((entry) => entry?.heat),
+    viz,
+  );
   const isFlipped = state.settings.rotateBoard;
   const boardEl = dom.root;
 
@@ -182,7 +204,7 @@ function renderCatVision(dom, state) {
       const catIndex = catSquareIndex(row, col);
       const heat = Number(viz.squares?.[catIndex] ?? 0);
       const reachable = viz.reachable ? viz.reachable[catIndex] : true;
-      const overlay = catSquareOverlay(heat, reachable, scale);
+      const overlay = catSquareOverlay(heat, reachable, squareScale);
       if (!overlay) {
         continue;
       }
@@ -211,7 +233,7 @@ function renderCatVision(dom, state) {
       }
       const type = move < 200 ? 0 : 1;
       const viewSlot = viewMove(move, isFlipped) % 100;
-      addCatWallHeat(dom, boardEl, type, viewSlot, entry, scale, visual);
+      addCatWallHeat(dom, boardEl, type, viewSlot, entry, wallScale, visual);
     }
   }
 }
