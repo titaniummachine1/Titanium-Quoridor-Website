@@ -52,8 +52,8 @@ assert(
   'production build never enables native titanium',
 );
 assert(
-  runtimeSrc.includes('return 1'),
-  'browser WASM uses a single search worker',
+  runtimeSrc.includes('resolveCores'),
+  'titanium WASM uses configured thread count',
 );
 assert(
   controllerSrc.includes('hasNativeTitaniumLazySmp'),
@@ -122,6 +122,16 @@ assert(
 assert(
   engineWasm.includes('TitaniumSearch::grafted(g, None)'),
   'titanium-v15 still uses live grafted net',
+);
+
+console.log('\n[isolate] load notation kicks AI on side to move');
+assert(
+  controllerSrc.includes('loadNotationString(text)'),
+  'loadNotationString exists',
+);
+assert(
+  /loadNotationString[\s\S]*?maybeRequestAiMove\(\)/.test(controllerSrc),
+  'loadNotationString requests AI move after position rebuild',
 );
 
 console.log('\n════════════════════════════════');

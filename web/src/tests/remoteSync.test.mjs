@@ -155,6 +155,48 @@ console.log('\n[sync] go blocked when DESYNCED');
   assert(threw, 'go throws when desynced');
 }
 
+console.log('\n[sync] ensureSynchronized recovers from DESYNCED');
+{
+  const { client } = await openClient();
+  const moves = [parseAlgebraic('e2'), parseAlgebraic('e8')];
+  const key = positionKeyFromHistory(moves);
+  client.markDesynced('test');
+  await client.ensureSynchronized({
+    history: moves,
+    positionKey: key,
+    isFreshGame: false,
+  });
+  await flushMicrotasks();
+  assertEqual(client.syncState, SyncState.SYNCED, 'ensureSynchronized healed DESYNCED');
+  assertEqual(client.appliedPlies, 2, 'applied plies after heal');
+}
+
+console.log('\n[sync] stale resync does not rewind appliedPlies');
+{
+  const { client } = await openClient();
+  const hist5 = ['e2', 'e8', 'e3', 'd8', 'e4'].map(parseAlgebraic);
+  const key5 = positionKeyFromHistory(hist5);
+  await client.syncGameState({ moveHistory: hist5, positionKey: key5, isFreshGame: false });
+  await flushMicrotasks();
+  const staleRecover = client.recoverFromDesync({
+    moveHistory: hist5,
+    positionKey: key5,
+    isFreshGame: false,
+  });
+  const hist6 = [...hist5, parseAlgebraic('d4h')];
+  const key6 = positionKeyFromHistory(hist6);
+  await client.echoCommittedMove(parseAlgebraic('d4h'), key6, 6, hist6);
+  await flushMicrotasks();
+  assertEqual(client.appliedPlies, 6, 'd4h echo applied');
+  await staleRecover;
+  assertEqual(client.appliedPlies, 6, 'stale recover did not rewind');
+  const hist7 = [...hist6, parseAlgebraic('f4')];
+  const key7 = positionKeyFromHistory(hist7);
+  await client.echoCommittedMove(parseAlgebraic('f4'), key7, 7, hist7);
+  await flushMicrotasks();
+  assertEqual(client.appliedPlies, 7, 'f4 echo after stale recover');
+}
+
 console.log('\n════════════════════════════════');
 console.log(`TOTAL: ${passed + failed} — passed ${passed}, failed ${failed}`);
 if (failed > 0) process.exit(1);

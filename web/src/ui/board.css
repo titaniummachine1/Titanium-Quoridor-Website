@@ -224,8 +224,52 @@
   outline: 2px solid var(--p2, #603808);
 }
 
-.quoridor-board .cell.hl:not(.ghost-pawn)::after {
+.quoridor-board .cell.hl:not(.ghost-pawn):not(.human-hover-pawn)::after {
   display: none;
+}
+
+/* Human hover — pawn destination ghost (your move preview). */
+.quoridor-board .cell.human-hover-pawn {
+  z-index: 5;
+}
+
+.quoridor-board .cell.human-hover-pawn::before {
+  content: '';
+  position: absolute;
+  inset: 10%;
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 5;
+  box-shadow: 0 0 10px rgba(0, 0, 0, 0.22);
+}
+
+.quoridor-board .cell.human-hover-pawn--player1::before {
+  background: var(--ghost-pawn-fill-p1);
+  border: 2px solid var(--ghost-ring-p1);
+}
+
+.quoridor-board .cell.human-hover-pawn--player2::before {
+  background: var(--ghost-pawn-fill-p2);
+  border: 2px solid var(--ghost-ring-p2);
+}
+
+.quoridor-board .cell.human-hover-pawn::after {
+  content: '';
+  position: absolute;
+  inset: 6%;
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 6;
+  border: var(--ghost-ring-width) dashed transparent;
+  animation: ghost-pawn-ring-spin var(--ghost-pawn-spin-period) linear infinite;
+}
+
+.quoridor-board .cell.human-hover-pawn--player1::after {
+  border-color: var(--ghost-ring-p1);
+}
+
+.quoridor-board .cell.human-hover-pawn--player2::after {
+  border-color: var(--ghost-ring-p2);
 }
 
 .quoridor-board .cell.lastc {
@@ -247,6 +291,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .quoridor-board .cell.ghost-pawn::after,
+  .quoridor-board .cell.human-hover-pawn::after,
   .ghost-pv-ring__stroke {
     animation: none;
   }
@@ -391,8 +436,10 @@
 }
 
 .quoridor-board .wallpiece.preview {
-  opacity: 0.88;
+  opacity: 0.92;
   box-sizing: border-box;
+  z-index: 5;
+  pointer-events: none;
 }
 
 .quoridor-board .wallpiece.preview.wallpiece--player1:not(.bad):not(.ghost-pv) {
@@ -428,7 +475,8 @@
   background: transparent;
   overflow: visible;
   transform: none;
-  z-index: 4;
+  z-index: 6;
+  pointer-events: none;
 }
 
 .quoridor-board .wallpiece.ghost-pv::before {

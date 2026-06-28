@@ -113,6 +113,8 @@ export class EngineClient {
     this._commandQueue = [];
     this._queueDraining = false;
     this._pendingMakemoveCount = 0;
+    this._resyncGeneration = 0;
+    this._resyncTail = Promise.resolve();
 
     this.sendBuffer = [];
     this.outstandingSearches = 0;
@@ -152,6 +154,7 @@ export class EngineClient {
   }
 
   updateLocalExpectations(moveHistory, positionKey) {
+    this._localHistory = moveHistory;
     this._localHistoryLength = moveHistory.length;
     this._localPositionKey = positionKey ?? positionKeyFromHistory(moveHistory);
   }
@@ -177,15 +180,38 @@ export class EngineClient {
   }
 
   /** Echo one committed ply to the remote search box (including own bestmove). */
-  echoCommittedMove(action, positionKey, historyLength) {
+  echoCommittedMove(action, positionKey, historyLength, moveHistory = null) {
     this._localHistoryLength = historyLength;
     this._localPositionKey = positionKey;
+    if (moveHistory) {
+      this._localHistory = moveHistory;
+    }
 
     if (this.syncState === SyncState.DESYNCED) {
+      if (moveHistory?.length === historyLength) {
+        return this.recoverFromDesync({
+          moveHistory,
+          positionKey,
+          isFreshGame: historyLength === 0,
+        });
+      }
       return Promise.reject(new Error('remote engine DESYNCED — full resync required'));
     }
     if (this.appliedPlies >= historyLength) {
-      return Promise.resolve();
+      if (this.appliedPositionKey === positionKey) {
+        return Promise.resolve();
+      }
+      if (!moveHistory?.length) {
+        this.markDesynced(
+          `position key drift: appliedPlies=${this.appliedPlies} history=${historyLength}`,
+        );
+        return Promise.reject(new Error('remote engine position key drift'));
+      }
+      return this.recoverFromDesync({
+        moveHistory,
+        positionKey,
+        isFreshGame: historyLength === 0,
+      });
     }
     if (this.appliedPlies !== historyLength - 1) {
       this.markDesynced(
@@ -195,9 +221,15 @@ export class EngineClient {
     }
 
     const moveStr = toEngineAlgebraic(action, this.config.notation);
+    const generation = ++this._resyncGeneration;
     return this._enqueueMakemove(moveStr).then(() => {
+      if (generation !== this._resyncGeneration) {
+        return;
+      }
       this.appliedPlies = historyLength;
       this.appliedPositionKey = positionKey;
+      this.syncState = SyncState.SYNCED;
+      this._goBlocked = false;
     });
   }
 
@@ -223,10 +255,8 @@ export class EngineClient {
     const key = positionKey ?? positionKeyFromHistory(moveHistory);
     this.updateLocalExpectations(moveHistory, key);
 
-    if (this.syncState === SyncState.DESYNCED) {
-      throw new Error('remote engine DESYNCED — full resync required');
-    }
     if (
+      this.syncState === SyncState.DESYNCED ||
       this.appliedPlies !== moveHistory.length ||
       this.appliedPositionKey !== key
     ) {
@@ -647,10 +677,36 @@ export class EngineClient {
     this.connect();
   }
 
-  async _runFullResync({ moveHistory, gameSnapshot, isFreshGame, positionKey }) {
+  _historyForLength(historyLength) {
+    if (this._localHistory?.length >= historyLength) {
+      return this._localHistory.slice(0, historyLength);
+    }
+    return this._localHistory ?? [];
+  }
+
+  async _runFullResync(ctx) {
+    const generation = ++this._resyncGeneration;
+    let resolveTail;
+    const run = this._resyncTail.then(async () => {
+      await this._runFullResyncBody(ctx, generation);
+    });
+    this._resyncTail = new Promise((resolve) => {
+      resolveTail = resolve;
+    });
+    try {
+      await run;
+    } finally {
+      resolveTail();
+    }
+  }
+
+  async _runFullResyncBody({ moveHistory, gameSnapshot, isFreshGame, positionKey }, generation) {
     await this._enqueueRaw(CommandKind.STOP, 'stop');
 
     if (isFreshGame && moveHistory.length === 0) {
+      if (generation !== this._resyncGeneration) {
+        return;
+      }
       this.appliedPlies = 0;
       this.appliedPositionKey = positionKey ?? '';
       this.syncState = SyncState.SYNCED;
@@ -671,6 +727,9 @@ export class EngineClient {
       await this._enqueueRaw(CommandKind.SYNCPOSITION, `setposition ${position}`);
     }
 
+    if (generation !== this._resyncGeneration) {
+      return;
+    }
     this.appliedPlies = moveHistory.length;
     this.appliedPositionKey = positionKey ?? positionKeyFromHistory(moveHistory);
     this.syncState = SyncState.SYNCED;

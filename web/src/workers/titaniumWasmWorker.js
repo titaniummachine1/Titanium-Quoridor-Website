@@ -84,6 +84,7 @@ async function handleSearch(eventData) {
     wasm.reset();
   }
 
+  let lastProgress = null;
   const onProgress =
     streamProgress && workerSlot === 0
       ? (jsonStr) => {
@@ -91,6 +92,7 @@ async function handleSearch(eventData) {
           if (!data) {
             return;
           }
+          lastProgress = data;
           self.postMessage({
             type: 'info',
             thinking: true,
@@ -145,9 +147,11 @@ async function handleSearch(eventData) {
   }
 
   const depth =
-    typeof wasm.last_search_depth === 'function' ? wasm.last_search_depth() : undefined;
+    (typeof wasm.last_search_depth === 'function' ? wasm.last_search_depth() : undefined) ??
+    lastProgress?.searchDepth;
   const nodes =
-    typeof wasm.last_search_nodes === 'function' ? Number(wasm.last_search_nodes()) : undefined;
+    (typeof wasm.last_search_nodes === 'function' ? Number(wasm.last_search_nodes()) : undefined) ??
+    lastProgress?.nodes;
   const stopReason =
     typeof wasm.last_stop_reason === 'function' ? wasm.last_stop_reason() : undefined;
 
@@ -162,6 +166,15 @@ async function handleSearch(eventData) {
     stoppedBy: engineMode,
     mode: engineMode,
     nodeSource: 'bestmove_final',
+    searchDepth: lastProgress?.searchDepth,
+    rootScore: lastProgress?.rootScore,
+    whiteDist: lastProgress?.whiteDist,
+    blackDist: lastProgress?.blackDist,
+    depthLog: lastProgress?.depthLog,
+    elapsedMs: lastProgress?.elapsedMs,
+    pv: lastProgress?.depthLog?.length
+      ? lastProgress.depthLog[lastProgress.depthLog.length - 1]?.pv
+      : undefined,
   });
 }
 

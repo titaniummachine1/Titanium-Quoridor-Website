@@ -12,12 +12,8 @@ export function hasNativeTitaniumLazySmp() {
 }
 
 /**
- * Browser WASM runs one worker (same engine instance as dev without native proxy).
- * Multiple full WasmEngine copies trap or hang on GitHub Pages.
+ * Titanium search parallelism — native Lazy SMP or WASM worker pool (user thread setting).
  */
 export function resolveTitaniumSearchCores(aiSettings) {
-  if (hasNativeTitaniumLazySmp()) {
-    return resolveCores(aiSettings);
-  }
-  return 1;
+  return resolveCores(aiSettings);
 }

@@ -10,6 +10,26 @@ import { resolveTitaniumSearchCores } from './titaniumRuntime.js';
 import { enrichNodeFields } from './searchNodes.js';
 import { setRustIdentityFromWasm } from './wasmBuildInfo.js';
 
+function synthesizeDepthLog(meta, { searchDepth, nodes, pv } = {}) {
+  if (meta?.depthLog?.length) {
+    return meta.depthLog;
+  }
+  const depth = searchDepth ?? meta?.searchDepth;
+  const nodeCount = nodes ?? meta?.nodes ?? 0;
+  const score = meta?.rootScore;
+  if (depth == null && nodeCount <= 0 && score == null) {
+    return meta?.depthLog;
+  }
+  return [
+    {
+      depth: depth ?? 0,
+      score: score ?? 0,
+      nodes: nodeCount,
+      pv: pv ?? meta?.pv ?? '',
+    },
+  ];
+}
+
 export class TitaniumWasmEngineClient {
   constructor(engineConfig) {
     this.config = engineConfig;
@@ -23,6 +43,12 @@ export class TitaniumWasmEngineClient {
     this.pendingRequest = null;
     this.queuedRequest = null;
     this.workerCrashRetries = 0;
+    /** @type {Promise<unknown> | null} */
+    this._initInFlight = null;
+  }
+
+  workersReady() {
+    return this.cores > 0 && this._workerReady.size >= this.cores;
   }
 
   ensureWorkers() {
@@ -43,6 +69,16 @@ export class TitaniumWasmEngineClient {
 
   /** Initialize WASM in each worker sequentially (avoids parallel cold-start traps on Pages). */
   async initWorkers(engineMode = this.config?.engineMode ?? 'titanium-v15', { timeoutMs = 60_000 } = {}) {
+    if (this._initInFlight) {
+      return this._initInFlight;
+    }
+    this._initInFlight = this._initWorkersOnce(engineMode, timeoutMs).finally(() => {
+      this._initInFlight = null;
+    });
+    return this._initInFlight;
+  }
+
+  async _initWorkersOnce(engineMode, timeoutMs) {
     this.ensureWorkers();
     const payloads = [];
     for (let workerId = 0; workerId < this.cores; workerId++) {
@@ -64,6 +100,18 @@ export class TitaniumWasmEngineClient {
       payloads.push(data);
     }
     return payloads;
+  }
+
+  /** Load WASM in workers before the first move (avoids empty info cards during cold init). */
+  async prewarm(engineMode = this.config?.engineMode ?? 'titanium-v15') {
+    if (this.workersReady()) {
+      return;
+    }
+    try {
+      await this.initWorkers(engineMode);
+    } catch (err) {
+      console.warn('Titanium WASM prewarm failed; will retry on first move', err);
+    }
   }
 
   _resolveReady(workerId, data) {
@@ -194,6 +242,19 @@ export class TitaniumWasmEngineClient {
     if (data.type === 'bestmove') {
       pending.results ??= new Map();
       pending.results.set(workerId, data);
+      if (workerId === 0) {
+        pending.finalMeta = {
+          ...(pending.finalMeta ?? {}),
+          depthLog: data.depthLog?.length ? data.depthLog : pending.finalMeta?.depthLog,
+          searchDepth: data.searchDepth ?? data.depth ?? pending.finalMeta?.searchDepth,
+          rootScore: data.rootScore ?? pending.finalMeta?.rootScore,
+          whiteDist: data.whiteDist ?? pending.finalMeta?.whiteDist,
+          blackDist: data.blackDist ?? pending.finalMeta?.blackDist,
+          nodes: data.nodes ?? pending.finalMeta?.nodes,
+          elapsedMs: data.elapsedMs ?? pending.finalMeta?.elapsedMs,
+          pv: data.pv ?? pending.finalMeta?.pv,
+        };
+      }
       this._maybeFinishSearch(pending);
     }
   }
@@ -268,6 +329,11 @@ export class TitaniumWasmEngineClient {
     const selectedWorkerNodes = worker0.nodes ?? nodeFields.selectedWorkerNodes ?? 0;
     const elapsed = performance.now() - pending.started;
     const meta = pending.finalMeta ?? {};
+    const depthLog = synthesizeDepthLog(meta, {
+      searchDepth,
+      nodes: nodeFields.nodes,
+      pv: meta.pv,
+    });
 
     this.setStatus('idle');
     this.workerCrashRetries = 0;
@@ -285,7 +351,7 @@ export class TitaniumWasmEngineClient {
       stoppedBy: meta.stoppedBy ?? worker0.stoppedBy ?? this.config?.engineMode ?? 'titanium-v15',
       mode: meta.mode ?? worker0.mode ?? this.config?.engineMode ?? 'titanium-v15',
       searchDepth,
-      depthLog: meta.depthLog,
+      depthLog,
       whiteDist: meta.whiteDist,
       blackDist: meta.blackDist,
       rootScore: meta.rootScore,
@@ -355,6 +421,7 @@ export class TitaniumWasmEngineClient {
     }
     this.workers = [];
     this._workerReady.clear();
+    this._initInFlight = null;
     for (const [, waiter] of this._readyWaiters) {
       waiter.reject(new Error('Worker terminated'));
     }
@@ -432,27 +499,20 @@ export class TitaniumWasmEngineClient {
     const maxNodes = resolveMaxNodes(aiSettings?.visitsBudget ?? 0);
     const engineMode = this.config?.engineMode ?? 'titanium-v15';
 
-    this.setStatus('connecting');
-    this.ensureWorkers();
-
     if (this.pendingRequest) {
       throw new Error('Titanium WASM search already in flight');
     }
 
-    const readyStart = performance.now();
-    try {
-      await this.initWorkers(engineMode);
-    } catch (err) {
-      this.setStatus('error');
-      throw err;
+    this.ensureWorkers();
+    const needsInit = !this.workersReady();
+    if (needsInit) {
+      this.setStatus('connecting');
     }
-    this.setStatus('searching');
-    const initMs = performance.now() - readyStart;
 
     const started = performance.now();
-    this.pendingRequest = {
+    const pending = {
       started,
-      initMs,
+      initMs: 0,
       timeMs,
       finalMeta: {},
       results: new Map(),
@@ -470,6 +530,18 @@ export class TitaniumWasmEngineClient {
         this.drainQueuedRequest();
       },
     };
+    this.pendingRequest = pending;
+
+    const readyStart = performance.now();
+    try {
+      await this.initWorkers(engineMode);
+    } catch (err) {
+      this.pendingRequest = null;
+      this.setStatus('error');
+      throw err;
+    }
+    pending.initMs = performance.now() - readyStart;
+    this.setStatus('searching');
 
     for (let workerId = 0; workerId < this.cores; workerId++) {
       this.workers[workerId].postMessage({
@@ -481,7 +553,7 @@ export class TitaniumWasmEngineClient {
         engineMode,
         workerSlot: workerId,
         lmrBias: workerId === 0 ? 0 : workerId * 5,
-        streamProgress: import.meta.env.DEV,
+        streamProgress: true,
       });
     }
   }

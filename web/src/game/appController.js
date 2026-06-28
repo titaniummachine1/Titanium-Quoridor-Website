@@ -10,7 +10,7 @@ import { TitaniumEngineClient } from '../lib/titaniumRustClient.js';
 import { TitaniumWasmEngineClient } from '../lib/titaniumWasmClient.js';
 import { resolveOnBestMoveResult } from '../lib/onBestMoveResult.js';
 import { positionKeyFromActions, resolveLiveBestMoveKey, pvFirstMoveFromLiveSearch, coalesceRootMoves } from '../lib/liveBestMove.js';
-import { positionKeyFromHistory as historyPositionKey } from '../lib/remoteSync.js';
+import { positionKeyFromHistory as historyPositionKey, SyncState } from '../lib/remoteSync.js';
 import {
   buildDiagnosticContext,
   validateEngineMoveBeforeCommit,
@@ -1169,8 +1169,31 @@ export class AppController {
     } catch (error) {
       this.legalityOracleState = { ready: false, error };
     }
+    void this.prewarmTitaniumWasmEngines();
     this.onChange?.();
     return this.legalityOracleState;
+  }
+
+  /** Cold-start WASM workers before the first AI move so info/PV telemetry is live immediately. */
+  async prewarmTitaniumWasmEngines() {
+    const tasks = [];
+    for (let seat = 0; seat < this.settings.players.length; seat++) {
+      const playerType = this.settings.players[seat];
+      if (!isTitaniumEngine(playerType, this.engineConfigs)) {
+        continue;
+      }
+      const engine = this.getEngineForSeat(seat);
+      if (typeof engine?.prewarm === 'function') {
+        tasks.push(
+          engine.prewarm().catch((err) => {
+            console.warn(`Titanium WASM prewarm failed for seat ${seat}`, err);
+          }),
+        );
+      }
+    }
+    if (tasks.length > 0) {
+      await Promise.all(tasks);
+    }
   }
 
   hasAiPlayerSelected(players = this.settings.players) {
@@ -1242,6 +1265,7 @@ export class AppController {
   newGame() {
     this._gameGeneration += 1;
     this._moveRequestSeq += 1;
+    this._activeSearchSeq = 0;
     this.aiThinking = false;
     this.thinkingPlayerType = null;
     this.thinkingSeatIndex = null;
@@ -1504,39 +1528,65 @@ export class AppController {
   }
 
   /** After any ply, sync remote seats then request the next AI move. */
-  continueAiAfterEngineSync(action) {
+  continueAiAfterEngineSync(action, actingSeat = null) {
     const gameGeneration = this._gameGeneration;
-    void this.syncRemoteEnginesAfterMove(action)
-      .catch((err) => {
+    if (actingSeat == null) {
+      actingSeat = this.session.playerToMove === 2 ? 0 : 1;
+    }
+    void this.syncRemoteEnginesAfterMove(action, actingSeat)
+      .catch(async (err) => {
         if (gameGeneration !== this._gameGeneration) {
           return;
         }
         console.error('Engine position sync failed after ply', err);
         const positionKey = this.currentPositionKey();
-        for (let seat = 0; seat < this.settings.players.length; seat++) {
-          if (this.settings.players[seat] === PlayerType.Human) {
-            continue;
-          }
-          const diagnostic = buildDiagnosticContext({
+        const moveHistory = this.session.actions;
+        const diagnostic = buildDiagnosticContext({
           session: this.session,
           settings: this.settings,
           reason: 'remote-sync-failure',
         });
         this._lastDiagnostic = diagnostic;
         const message = `${err?.message ?? String(err)}\n\n${diagnostic}`;
+        const recoveries = [];
+        for (let seat = 0; seat < this.settings.players.length; seat++) {
+          const playerType = this.settings.players[seat];
+          if (playerType === PlayerType.Human) {
+            continue;
+          }
+          const engineEntry = getEngineEntryForPlayer(
+            playerType,
+            this.settings.playerAiSettings[seat],
+          );
+          if (!engineEntry || engineEntry.backend !== EngineBackendKind.REMOTE_WS) {
+            continue;
+          }
           this.engineErrors[seat] = message;
           this.engineStatus[seat] = 'error';
           const engine = this.getEngineForSeat(seat);
           if (engine?.markDesynced) {
             engine.markDesynced(message);
-            void engine.recoverFromDesync({
-              moveHistory: this.session.actions,
-              gameSnapshot: this.session.getEngineSnapshot(),
-              isFreshGame: this.session.actions.length === 0,
-              positionKey,
-            }).catch((resyncErr) => {
-              console.error('Remote resync failed', resyncErr);
-            });
+            recoveries.push(
+              engine.recoverFromDesync({
+                moveHistory,
+                gameSnapshot: this.session.getEngineSnapshot(),
+                isFreshGame: moveHistory.length === 0,
+                positionKey,
+              }).catch((resyncErr) => {
+                console.error('Remote resync failed', resyncErr);
+                throw resyncErr;
+              }),
+            );
+          }
+        }
+        if (recoveries.length) {
+          await Promise.all(recoveries);
+          for (let seat = 0; seat < this.settings.players.length; seat++) {
+            const engine = this.getEngineForSeat(seat);
+            if (engine?.syncState === SyncState.SYNCED) {
+              this.engineErrors[seat] = null;
+              this.engineStatus[seat] = 'idle';
+            }
           }
         }
         this.onChange?.();
@@ -1698,11 +1748,7 @@ export class AppController {
         });
         const siMerged = this.searchInfoBySeat[seatIndex];
         if (info.thinking) {
-          if (
-            !this.aiThinking ||
-            this.thinkingSeatIndex !== seatIndex ||
-            this._activeSearchSeq !== this._moveRequestSeq
-          ) {
+          if (!this.aiThinking || this.thinkingSeatIndex !== seatIndex) {
             return;
           }
           const si = this.searchInfoBySeat[seatIndex];
@@ -1745,6 +1791,7 @@ export class AppController {
             lmrProfile: info.lmrProfile ?? this.liveSearch?.lmrProfile,
             lmrReSearches: info.lmrReSearches ?? this.liveSearch?.lmrReSearches,
             rootScore: liveRootScore,
+            elapsedMs: info.elapsedMs ?? this.liveSearch?.elapsedMs,
             rolloutVerdict: info.rolloutVerdict ?? this.liveSearch?.rolloutVerdict,
             rolloutVisits: info.rolloutVisits ?? this.liveSearch?.rolloutVisits,
             rolloutWins: info.rolloutWins ?? this.liveSearch?.rolloutWins,
@@ -1847,9 +1894,10 @@ export class AppController {
   }
 
   /** Keep remote engine clients in sync after every ply (incremental makemove echo). */
-  async syncRemoteEnginesAfterMove(action) {
+  async syncRemoteEnginesAfterMove(action, _actingSeat = null) {
     const positionKey = this.currentPositionKey();
     const historyLength = this.session.actions.length;
+    const moveHistory = this.session.actions;
     const ops = [];
     for (let seat = 0; seat < this.settings.players.length; seat++) {
       const playerType = this.settings.players[seat];
@@ -1864,7 +1912,12 @@ export class AppController {
         continue;
       }
       const engine = this.getEngineForSeat(seat);
-      const echo = engine?.echoCommittedMove?.(action, positionKey, historyLength);
+      const echo = engine?.echoCommittedMove?.(
+        action,
+        positionKey,
+        historyLength,
+        moveHistory,
+      );
       if (echo?.then) {
         ops.push(echo);
       }
@@ -2562,7 +2615,7 @@ export class AppController {
       decodedMove: moveKey,
     });
     this.onChange?.();
-    this.continueAiAfterEngineSync(action);
+    this.continueAiAfterEngineSync(action, seatIndex);
     logAiRequestEvent('AI_REQUEST_FINALLY', { requestSeq, seatIndex });
     return true;
   }
@@ -3025,10 +3078,15 @@ export class AppController {
       this.thinkingSeatIndex = null;
       this.liveSearch = null;
       this.engineErrors = {};
+      this.engineStatus = {};
       this.replay = null;
+      this.moveThinkLog = [];
+      this.settings.uiMode = 'play';
       this.session.rebuildFromActions(actions);
       this.handleCatPositionChanged();
-      this.onChange && this.onChange();
+      this.confirmStartup();
+      this.onChange?.();
+      this.maybeRequestAiMove();
       return null;
     } catch (err) {
       return { error: 'Failed to apply moves: ' + (err && err.message ? err.message : err) };

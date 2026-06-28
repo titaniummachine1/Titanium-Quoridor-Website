@@ -32,44 +32,60 @@ export const WALL_CLOCK_RANGE = {
   defaultSeconds: 10,
 };
 
-/** @deprecated use coresSliderMax — remote cloud engines only */
+/** Upper cap for the thread slider when logical CPU count is unknown or very high. */
 export const THREADS_HARD_MAX = 8;
 
-/** Logical CPU count on this machine (browser WASM worker pool size). */
-export function defaultCoreCount() {
-  if (typeof navigator !== 'undefined' && navigator.hardwareConcurrency > 0) {
-    return Math.max(1, Math.min(navigator.hardwareConcurrency, 4));
-  }
-  return 4;
-}
+/** Default Titanium / local search thread count. */
+export const DEFAULT_THREAD_COUNT = 8;
 
-/** Max cores selectable in the UI — full machine count. */
-export function coresSliderMax() {
-  return defaultCoreCount();
-}
-
-/** @deprecated use coresSliderMax */
+/** Max threads in the UI — machine logical CPUs, capped at 8; 8 if unknown. */
 export function threadsSliderMax() {
-  return coresSliderMax();
+  if (typeof navigator !== 'undefined' && navigator.hardwareConcurrency > 0) {
+    return Math.max(1, Math.min(navigator.hardwareConcurrency, THREADS_HARD_MAX));
+  }
+  return THREADS_HARD_MAX;
+}
+
+/** Default thread count for new Titanium seats (clamped to slider max). */
+export function defaultThreadCount() {
+  return Math.min(DEFAULT_THREAD_COUNT, threadsSliderMax());
+}
+
+/** @deprecated use defaultThreadCount */
+export function defaultCoreCount() {
+  return defaultThreadCount();
+}
+
+/** @deprecated use threadsSliderMax */
+export function coresSliderMax() {
+  return threadsSliderMax();
 }
 
 export function clampCores(cores) {
   const n = Number(cores);
   if (!Number.isFinite(n)) {
-    return defaultCoreCount();
+    return defaultThreadCount();
   }
-  return Math.max(1, Math.min(coresSliderMax(), Math.round(n)));
+  return Math.max(1, Math.min(threadsSliderMax(), Math.round(n)));
 }
 
-/** Read core count from saved settings (`cores` preferred; `threads` is legacy). */
-export function resolveCores(aiSettings) {
+/** @deprecated use clampCores */
+export const clampThreads = clampCores;
+
+/** Read thread count from saved settings (`cores` / legacy `threads`). */
+export function resolveThreads(aiSettings) {
   if (aiSettings?.cores != null) {
     return clampCores(aiSettings.cores);
   }
   if (aiSettings?.threads != null) {
     return clampCores(aiSettings.threads);
   }
-  return defaultCoreCount();
+  return defaultThreadCount();
+}
+
+/** @deprecated use resolveThreads */
+export function resolveCores(aiSettings) {
+  return resolveThreads(aiSettings);
 }
 
 /** Titanium difficulty tiers (NNUE weight sets). */
@@ -335,7 +351,7 @@ export function defaultPlayerAiSettings(playerType, engineConfigs) {
       titaniumNet: TITANIUM_NET_HARD,
       wallClockSeconds: WALL_CLOCK_RANGE.defaultSeconds,
       visitsBudget: UNLIMITED_VISITS,
-      cores: defaultCoreCount(),
+      cores: defaultThreadCount(),
     };
   }
   if (isQuoridorV3Engine(playerType, engineConfigs)) {

@@ -73,7 +73,18 @@ function liveGhostKey(state, validActions) {
   if (state.settings?.showBestMoveHint === false) {
     return '';
   }
-  return resolveLiveBestMoveKey(state, { validActions }) ?? '';
+  const seat = state.thinkingSeatIndex;
+  const merged =
+    state.aiThinking && seat != null
+      ? {
+          ...state,
+          liveSearch:
+            (state.thinkingSeatIndex === seat && state.activeSearchInfo
+              ? { ...state.liveSearch, ...state.activeSearchInfo }
+              : state.liveSearch),
+        }
+      : state;
+  return resolveLiveBestMoveKey(merged, { validActions }) ?? '';
 }
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -111,9 +122,90 @@ function createGhostWallRing(isHorizontal) {
   return svg;
 }
 
-function clearGhostPawnHints(cellEls) {
-  cellEls.forEach((cell) => {
-    cell.classList.remove('ghost-pawn', 'ghost-pawn--player1', 'ghost-pawn--player2');
+function humanSideClass(playerToMove) {
+  return playerToMove === 2 ? 'player2' : 'player1';
+}
+
+function canHumanInteract(state, controller) {
+  const freePlay = state.uiMode === 'analysis';
+  return (
+    !state.winner &&
+    !state.isDraw &&
+    !state.aiThinking &&
+    state.uiMode !== 'replay' &&
+    (freePlay || controller.session.isHumanTurn(state.settings.players))
+  );
+}
+
+function clearHumanHover(dom) {
+  if (dom._hoverPawnCell) {
+    dom._hoverPawnCell.classList.remove(
+      'human-hover-pawn',
+      'human-hover-pawn--player1',
+      'human-hover-pawn--player2',
+    );
+    dom._hoverPawnCell = null;
+  }
+  dom.previewEl?.remove();
+  dom.previewEl = null;
+}
+
+function setHumanPawnHover(dom, cell, playerToMove) {
+  if (dom._hoverPawnCell === cell) {
+    return;
+  }
+  clearHumanHover(dom);
+  const side = humanSideClass(playerToMove);
+  cell.classList.add('human-hover-pawn', `human-hover-pawn--${side}`);
+  dom._hoverPawnCell = cell;
+}
+
+function updateHumanMoveHover(ev, state, dom, controller) {
+  if (!canHumanInteract(state, controller)) {
+    clearHumanHover(dom);
+    return;
+  }
+
+  const cell = ev.target.closest('.quoridor-board .cell.hl');
+  if (cell) {
+    setHumanPawnHover(dom, cell, state.playerToMove);
+    return;
+  }
+
+  if (dom._hoverPawnCell) {
+    dom._hoverPawnCell.classList.remove(
+      'human-hover-pawn',
+      'human-hover-pawn--player1',
+      'human-hover-pawn--player2',
+    );
+    dom._hoverPawnCell = null;
+  }
+
+  const groove = ev.target.closest('.quoridor-board .groove');
+  dom.previewEl?.remove();
+  dom.previewEl = null;
+  if (!groove?.classList.contains('active')) {
+    return;
+  }
+
+  const pick = pickWallSlot(
+    groove.dataset.gtype,
+    Number(groove.dataset.gr),
+    Number(groove.dataset.gc),
+    ev,
+    groove,
+    state.board,
+    state.settings.rotateBoard,
+  );
+  if (!pick) {
+    return;
+  }
+
+  dom.previewEl = addWallElement(dom.root, pick.type, pick.viewSlot, {
+    preview: true,
+    bad: !pick.legal,
+    ghost: pick.legal,
+    owner: state.playerToMove,
   });
 }
 
@@ -412,12 +504,8 @@ function syncBoardDom(dom, state, controller) {
   const boardEl = dom.root;
   const lastKey = state.lastAction ? toAlgebraic(state.lastAction) : null;
   const freePlay = uiMode === 'analysis';
-  const canInteract =
-    !winner &&
-    !isDraw &&
-    !aiThinking &&
-    uiMode !== 'replay' &&
-    (freePlay || controller.session.isHumanTurn(settings.players));
+  const canInteract = canHumanInteract(state, controller);
+  const interactSide = humanSideClass(state.playerToMove);
 
   const validKeys = new Set(validActions.map((a) => toAlgebraic(a)));
   const wallOwners = new Map();
@@ -491,7 +579,9 @@ function syncBoardDom(dom, state, controller) {
   const sideClass = thinkSeat === 1 ? 'player2' : 'player1';
   const ghostIdentity = `${ghostKey}|${sideClass}`;
   if (dom._ghostIdentity !== ghostIdentity) {
-    clearGhostPawnHints(cellEls);
+    cellEls.forEach((cell) => {
+      cell.classList.remove('ghost-pawn', 'ghost-pawn--player1', 'ghost-pawn--player2');
+    });
     dom._ghostWallEl?.remove();
     dom._ghostWallEl = null;
 
@@ -532,7 +622,7 @@ function syncBoardDom(dom, state, controller) {
       if (!cell) {
         continue;
       }
-      cell.classList.add('hl', `hl--${sideClass}`);
+      cell.classList.add('hl', `hl--${interactSide}`);
       cell.dataset.action = engineMoveToAlgebraic(viewMove(cellIdx, isFlipped));
     }
     if (board.playerHasWalls()) {
@@ -542,10 +632,8 @@ function syncBoardDom(dom, state, controller) {
     }
   } else {
     dom.grooves.forEach((g) => g.classList.remove('active'));
+    clearHumanHover(dom);
   }
-
-  dom.previewEl?.remove();
-  dom.previewEl = null;
 
   renderCatVision(dom, state);
 
@@ -606,43 +694,16 @@ function bindBoardInput(container, getState, controller) {
   container.addEventListener('mousemove', (ev) => {
     const state = getState();
     const dom = container._boardDom;
-    if (!state || !dom || state.aiThinking || state.winner || state.uiMode === 'replay') {
-      dom?.previewEl?.remove();
-      if (dom) {
-        dom.previewEl = null;
-      }
+    if (!state || !dom) {
       return;
     }
-    const groove = ev.target.closest('.quoridor-board .groove');
-    dom.previewEl?.remove();
-    dom.previewEl = null;
-    if (!groove?.classList.contains('active')) {
-      return;
-    }
-    const pick = pickWallSlot(
-      groove.dataset.gtype,
-      Number(groove.dataset.gr),
-      Number(groove.dataset.gc),
-      ev,
-      groove,
-      state.board,
-      state.settings.rotateBoard,
-    );
-    if (!pick) {
-      return;
-    }
-    dom.previewEl = addWallElement(dom.root, pick.type, pick.viewSlot, {
-      preview: true,
-      bad: !pick.legal,
-      owner: state.playerToMove,
-    });
+    updateHumanMoveHover(ev, state, dom, controller);
   });
 
   container.addEventListener('mouseleave', () => {
     const dom = container._boardDom;
-    dom?.previewEl?.remove();
     if (dom) {
-      dom.previewEl = null;
+      clearHumanHover(dom);
     }
   });
 }

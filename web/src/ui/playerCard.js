@@ -53,6 +53,30 @@ function deepestEntry(depthLog) {
   return depthLog.reduce((best, e) => (e.depth > (best?.depth ?? 0) ? e : best));
 }
 
+/** Merge controller search telemetry for the thinking seat (live + finalized partial info). */
+function thinkingTelemetry(state, seatIndex) {
+  if (!state.aiThinking || state.thinkingSeatIndex !== seatIndex) {
+    return null;
+  }
+  const active = state.activeSearchInfo ?? state.searchInfoBySeat?.[seatIndex];
+  const live = state.liveSearch;
+  if (!active && !live) {
+    return null;
+  }
+  const depthLog = active?.depthLog?.length
+    ? active.depthLog
+    : (live?.depthLog ?? []);
+  return {
+    ...(live ?? {}),
+    ...(active ?? {}),
+    depthLog,
+    seatIndex: live?.seatIndex ?? seatIndex,
+    playerType: live?.playerType ?? state.settings.players[seatIndex],
+    requestSeq: live?.requestSeq ?? state.searchGeneration,
+    positionKey: live?.positionKey ?? state.positionKey,
+  };
+}
+
 function resolveNodes(snap) {
   return resolveDisplayNodes(snap);
 }
@@ -206,7 +230,7 @@ function derivePlayerCardView(state, seatIndex) {
   const hasError =
     !isHuman && engineStatus === 'error' && typeof engineError === 'string' && engineError.length > 0;
 
-  const liveSnap = isThinking ? state.liveSearch : null;
+  const liveSnap = thinkingTelemetry(state, seatIndex);
   const completedSnap = state.lastCompletedThinkBySeat?.[seatIndex];
   const snap = liveSnap ?? completedSnap;
 
@@ -221,6 +245,7 @@ function derivePlayerCardView(state, seatIndex) {
   const livePvMove = isThinking
     ? resolveLiveBestMoveKey({
       ...state,
+      liveSearch: thinkingTelemetry(state, seatIndex) ?? state.liveSearch,
       thinkingSeatIndex: seatIndex,
       searchGeneration: state.searchGeneration,
     })
@@ -265,6 +290,7 @@ function derivePlayerCardView(state, seatIndex) {
 
   const showPlayNow = isThinking && canPlayNow({
     ...state,
+    liveSearch: thinkingTelemetry(state, seatIndex) ?? state.liveSearch,
     thinkingSeatIndex: seatIndex,
     searchGeneration: state.searchGeneration,
   });
@@ -472,7 +498,7 @@ export function renderPlayerCard(container, state, seatIndex, controller) {
           <div class="player-card__stats">
             ${view.scoreDisplay ? `<span class="player-card__score${view.isMate ? ' player-card__score--mate' : ''}">${escHtml(view.scoreDisplay)}</span>` : ''}
             ${view.depth != null ? `<span class="player-card__stat"><span class="player-card__stat-label">d</span>${view.depth}</span>` : ''}
-            ${view.nodes > 0 ? `<span class="player-card__stat"><span class="player-card__stat-label">n</span>${escHtml(formatNodes(view.nodes))}</span>` : ''}
+            ${view.nodesLine ? `<span class="player-card__stat">${escHtml(view.nodesLine)}</span>` : view.nodes > 0 ? `<span class="player-card__stat"><span class="player-card__stat-label">n</span>${escHtml(formatNodes(view.nodes))}</span>` : ''}
             ${view.thinkMs != null ? `<span class="player-card__stat">${escHtml(formatMs(view.thinkMs))}</span>` : ''}
           </div>
           ${view.showPlayNow ? `<button class="btn btn--playnow" data-action="play-now" title="Stop search and play current best move">Play now</button>` : ''}

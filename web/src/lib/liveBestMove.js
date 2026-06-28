@@ -168,13 +168,21 @@ export { coalesceRootMoves, normalizeRootMoveToken };
  * Returns null when identity checks fail or move is illegal.
  */
 export function resolveLiveBestMoveKey(state, { validActions = null } = {}) {
-  if (!state.aiThinking || !state.liveSearch) return null;
+  if (!state.aiThinking) return null;
   if (state.winner || state.isDraw) return null;
 
   const seat = state.thinkingSeatIndex;
   if (seat == null) return null;
 
-  const ls = state.liveSearch;
+  const ls = {
+    ...(state.activeSearchInfo ?? {}),
+    ...(state.liveSearch ?? {}),
+    seatIndex: state.liveSearch?.seatIndex ?? seat,
+    playerType: state.liveSearch?.playerType ?? state.settings.players[seat],
+    requestSeq: state.liveSearch?.requestSeq ?? state.searchGeneration,
+    positionKey: state.liveSearch?.positionKey ?? positionKeyFromActions(state.actions ?? []),
+  };
+  if (!state.liveSearch && !state.activeSearchInfo) return null;
   if (ls.seatIndex !== seat) return null;
   if (state.settings.players[seat] !== ls.playerType) return null;
   if (state.playerToMove !== seat + 1) return null;

@@ -27,7 +27,7 @@ import {
   TITANIUM_NET_HARD,
   migrateTitaniumNet,
   coresSliderMax,
-  defaultCoreCount,
+  defaultThreadCount,
   clampCores,
 } from '../lib/timeControl.js';
 
@@ -40,7 +40,7 @@ const TITANIUM_NET_OPTIONS = import.meta.env.DEV
     ]
   : [{ label: 'Easy', id: TITANIUM_NET_EASY }];
 
-const PREFS_KEY = 'quoridor-player-prefs-v4';
+const PREFS_KEY = 'quoridor-player-prefs-v5';
 
 const TIME_TO_MOVE_OPTIONS = [
   { label: 'Immediate', id: TimeToMove.Intuition },
@@ -58,7 +58,7 @@ const ACE_V13_TIERS = [
 const DEFAULT_WALL_CLOCK    = 5;
 const DEFAULT_TIME_TO_MOVE  = TimeToMove.Short;
 const DEFAULT_ACE_TIER      = 0;
-const DEFAULT_CORES         = defaultCoreCount();
+const DEFAULT_CORES         = defaultThreadCount();
 const WALL_CLOCK_MIN        = 0.5;
 const WALL_CLOCK_MAX        = 60;
 const WALL_CLOCK_STEP       = 0.5;
