@@ -15,6 +15,10 @@
       rel="stylesheet"
     />
     <link rel="stylesheet" href="/src/styles.css" />
+    <!-- Enable crossOriginIsolated (SharedArrayBuffer / WASM threads) on GitHub
+         Pages, which cannot send COOP/COEP headers. Must run before the app so
+         the page reloads under the service worker before the engine loads. -->
+    <script src="%BASE_URL%coi-serviceworker.js"></script>
   </head>
   <body>
     <div id="app"></div>
