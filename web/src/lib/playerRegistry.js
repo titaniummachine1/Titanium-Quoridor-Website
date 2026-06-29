@@ -25,22 +25,13 @@ const GORISANSON_ENGINE = {
   uctConst: 0.2,
 };
 
-const TITANIUM_V15_ENGINE = {
-  kind: 'titanium',
-  name: 'Titanium v15',
-  key: PlayerType.TitaniumMinimax,
-  engineMode: 'titanium-v15',
-  tooltip:
-    'Titanium v15 — Easy / Medium / Hard NNUE tiers (in-browser WASM, fully offline)',
-};
-
 const TITANIUM_V16_ENGINE = {
   kind: 'titanium',
   name: 'Titanium v16',
   key: PlayerType.TitaniumV16,
   engineMode: 'titanium-v16',
   tooltip:
-    'Titanium v16 — v15 Hard weights + CAT LMR. Easy/Medium/Hard sets attention ceiling (500/800/1000 cm); cold walls search at depth 1.',
+    'Titanium v16 - v15 Hard weights + CAT-attention LMR. Easy/Medium/Hard sets the attention ceiling (500/800/1000 cm); cold walls search at depth 1.',
 };
 
 const ZERO_INK_ENGINE = {
@@ -75,7 +66,6 @@ export function getAllEngineConfigs() {
   }));
   return [
     GORISANSON_ENGINE,
-    TITANIUM_V15_ENGINE,
     TITANIUM_V16_ENGINE,
     ACE_V13_ENGINE,
     ZERO_INK_ENGINE,
@@ -97,12 +87,6 @@ export function getPlayerOptionGroups() {
           label: 'Gorisanson (JS, original)',
           disabled: false,
           tooltip: GORISANSON_ENGINE.tooltip,
-        },
-        {
-          value: PlayerType.TitaniumMinimax,
-          label: TITANIUM_V15_ENGINE.name,
-          disabled: false,
-          tooltip: TITANIUM_V15_ENGINE.tooltip,
         },
         {
           value: PlayerType.TitaniumV16,
@@ -194,9 +178,6 @@ const SEARCH_STOP_LABELS = {
   'ace-v13-js': 'ACE v13 JS',
   'ace-v13': 'ACE v13 Rust',
   'ace-v13-ti': 'ACE v13 MoveGen+',
-  'titanium-v15': 'Titanium v15 hard',
-  'titanium-v15-medium': 'Titanium v15 medium',
-  'titanium-v15-frozen': 'Titanium v15 easy',
   'titanium-v16': 'Titanium v16',
   zeroink: 'zero.ink',
   mcts: 'MCTS',
@@ -249,12 +230,6 @@ function buildSearchDepthHeader(header, { live }) {
     header.mode === 'ace-v13-js' ||
     header.mode === 'ace-v13' ||
     header.mode === 'ace-v13-ti' ||
-    header.stoppedBy === 'titanium-v15' ||
-    header.mode === 'titanium-v15' ||
-    header.stoppedBy === 'titanium-v15-medium' ||
-    header.mode === 'titanium-v15-medium' ||
-    header.stoppedBy === 'titanium-v15-frozen' ||
-    header.mode === 'titanium-v15-frozen' ||
     header.stoppedBy === 'titanium-v16' ||
     header.mode === 'titanium-v16' ||
     header.playerLabel?.includes('Titanium') ||
@@ -395,7 +370,11 @@ export function describeSearchInfo(playerType, searchInfo, engineConfigs) {
     const suffix = limit ? ` (${limit})` : '';
     const profile =
       searchInfo.profileName && isMinimax ? ` · ${searchInfo.profileName}` : '';
-    return `${formatWallClock(searchInfo.time / 1000)} · ${budgetLabel}${winPart}${distPart}${profile}${suffix}`;
+    const helperPart =
+      config?.kind === 'titanium' && Number(searchInfo.effectiveThreads) > 1
+        ? ` · t${searchInfo.effectiveThreads} h${searchInfo.helperStarts ?? 0}`
+        : '';
+    return `${formatWallClock(searchInfo.time / 1000)} · ${budgetLabel}${winPart}${distPart}${profile}${helperPart}${suffix}`;
   }
   if (config?.kind === 'remote') {
     const parts = [];

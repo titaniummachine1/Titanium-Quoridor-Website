@@ -5,12 +5,13 @@
 
 import init, { WasmAceEngine } from '../wasm/titanium/titanium.js';
 
+const WASM_THREAD_STACK_SIZE = 4 << 20;
 let engine = null;
 let initPromise = null;
 
 async function ensureEngine() {
   if (!initPromise) {
-    initPromise = init().then(() => {
+    initPromise = init({ thread_stack_size: WASM_THREAD_STACK_SIZE }).then(() => {
       engine = new WasmAceEngine();
     });
   }

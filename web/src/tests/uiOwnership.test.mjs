@@ -71,12 +71,12 @@ const tiSummary = compactPlayerConfigSummary({
   isHuman: false,
   isTitanium: true,
   isLocalMcts: true,
-  playerType: PlayerType.TitaniumMinimax,
+  playerType: PlayerType.TitaniumV16,
   titaniumNet: 'hard',
   wallClockSeconds: 3,
 });
 assert(
-  tiSummary.includes('Titanium v15') && tiSummary.includes('Hard') && tiSummary.includes('3'),
+  tiSummary.includes('Titanium v16') && tiSummary.includes('CAT 1000') && tiSummary.includes('3'),
   tiSummary,
 );
 

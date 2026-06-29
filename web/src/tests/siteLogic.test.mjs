@@ -108,13 +108,13 @@ const baseState = {
   isDraw: false,
   thinkingSeatIndex: 0,
   playerToMove: 1,
-  settings: { players: [PlayerType.TitaniumMinimax, PlayerType.Human] },
+  settings: { players: [PlayerType.TitaniumV16, PlayerType.Human] },
   actions: [],
   validActions: [{ coordinate: { column: 'e', row: 3 } }],
   searchGeneration: 7,
   liveSearch: {
     seatIndex: 0,
-    playerType: PlayerType.TitaniumMinimax,
+    playerType: PlayerType.TitaniumV16,
     requestSeq: 7,
     positionKey: canonicalPositionKeyFromActions([]),
     pv: 'e3',
@@ -190,7 +190,7 @@ console.log('\n[training] finished game payload');
 const trainingPayload = finishedGamePayload({
   actions: winLine.map(parseAlgebraic),
   winner: 2,
-  players: [PlayerType.Human, PlayerType.TitaniumMinimax],
+  players: [PlayerType.Human, PlayerType.TitaniumV16],
   playerAiSettings: [null, { threads: 2 }],
   engineLabels: ['Human', 'Titanium v16 live'],
 });

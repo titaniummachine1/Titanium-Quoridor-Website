@@ -46,15 +46,13 @@ export function mergedBuildIdentity() {
 
 export function formatBuildIdentityLines(identity = mergedBuildIdentity()) {
   const lines = [
-    `engine: ${identity.engine_version ?? 'titanium-v15'}`,
+    `engine: ${identity.engine_version ?? 'titanium-v16'}`,
     `commit: ${identity.git_commit ?? 'unknown'}`,
     `built: ${identity.build_timestamp ?? 'unknown'}`,
     `wasm sha256: ${identity.wasm_sha256 ?? 'unknown'}`,
     `wasm bytes: ${identity.wasm_bytes ?? '?'}`,
     `features: ${identity.features ?? 'wasm,embed-tables'}`,
     `weights live: ${identity.weights_live_sha256 ?? '?'}`,
-    `weights frozen: ${identity.weights_frozen_sha256 ?? '?'}`,
-    `weights medium: ${identity.weights_medium_sha256 ?? 'n/a'}`,
   ];
   if (identity.rust) {
     lines.push(`rust identity: ${JSON.stringify(identity.rust)}`);

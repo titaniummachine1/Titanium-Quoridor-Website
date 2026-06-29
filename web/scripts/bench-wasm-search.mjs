@@ -14,7 +14,7 @@ const withProgress = process.argv[3] !== '0';
 
 const wasmBytes = readFileSync(path.join(wasmDir, 'titanium_bg.wasm'));
 const { default: init, WasmEngine } = await import(pathToFileURL(path.join(wasmDir, 'titanium.js')).href);
-await init(wasmBytes);
+await init({ module_or_path: wasmBytes, thread_stack_size: 4 << 20 });
 
 let progressCalls = 0;
 const onProgress = withProgress
@@ -25,7 +25,10 @@ const onProgress = withProgress
 
 const engine = new WasmEngine(2); // hard tier (embedded weights)
 const t0 = performance.now();
-const mv = engine.go_with_profile(timeMs, 0, 0, 0, 0, onProgress);
+const mv =
+  typeof engine.go_threads === 'function'
+    ? engine.go_threads(timeMs, 0, 1, onProgress)
+    : engine.go(timeMs, 0, onProgress);
 const wallMs = performance.now() - t0;
 const depth = engine.last_search_depth();
 const nodes = Number(engine.last_search_nodes());

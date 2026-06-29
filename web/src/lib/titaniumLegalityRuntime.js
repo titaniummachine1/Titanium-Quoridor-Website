@@ -14,12 +14,13 @@ import {
 import { hasNativeTitaniumLazySmp } from './titaniumRuntime.js';
 
 const JS_BOARD_SOURCE = 'js-board-legality';
+const WASM_THREAD_STACK_SIZE = 4 << 20;
 
 let initPromise = null;
 
 async function ensureWasmInit() {
   if (!initPromise) {
-    initPromise = init();
+    initPromise = init({ thread_stack_size: WASM_THREAD_STACK_SIZE });
   }
   await initPromise;
 }

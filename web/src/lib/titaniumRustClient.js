@@ -32,9 +32,7 @@ function formatEngineHttpError(data, status) {
 
 const AB_ENGINE_MODES = new Set([
   'minimax',
-  'titanium-v15',
-  'titanium-v15-medium',
-  'titanium-v15-frozen',
+  'titanium-v16',
   'ace',
   'ace-v8-js',
   'ace-v8',
@@ -207,9 +205,7 @@ export class TitaniumEngineClient {
     const configured = this.config?.engineMode;
     const engineMode =
       configured === 'minimax' ||
-      configured === 'titanium-v15' ||
-      configured === 'titanium-v15-medium' ||
-      configured === 'titanium-v15-frozen' ||
+      configured === 'titanium-v16' ||
       isAlphaBetaEngineMode(configured)
         ? configured
         : 'mcts';

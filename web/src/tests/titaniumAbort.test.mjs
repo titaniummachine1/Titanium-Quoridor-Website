@@ -79,7 +79,7 @@ function restoreFetch() {
 
 function makeClient() {
   return new TitaniumEngineClient(
-    { engineMode: 'titanium-v15', key: 'titanium-minimax' },
+    { engineMode: 'titanium-v16', key: 'titanium-v16' },
     { seatId: 'seat-1' },
   );
 }

@@ -4,7 +4,13 @@
 
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, copyFileSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+  readdirSync,
+} from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -37,16 +43,28 @@ const wasmBindgen =
 const buildTimestamp = new Date().toISOString();
 const commit = gitCommit();
 const { RUSTFLAGS: _dropNativeRustflags, ...hostEnv } = process.env;
+const threadedWasm = process.env.TITANIUM_WASM_THREADS !== '0';
+const wasmFeatures = threadedWasm ? 'wasm-threads,embed-tables' : 'wasm,embed-tables';
 const env = {
   ...hostEnv,
   WASM_BINDGEN: wasmBindgen,
   GIT_COMMIT_HASH: commit,
   WASM_BUILD_TIMESTAMP: buildTimestamp,
+  ...(threadedWasm
+    ? {
+        RUSTFLAGS:
+          // max-memory 256MB: the threaded build holds the main thread's local TT
+          // (~26MB at TT_BITS=20) AND a shared lazy-SMP TT (~36MB of per-entry
+          // RwLocks) simultaneously. The old 64MB cap overflowed during the first
+          // threaded search's shared-TT allocation → handle_alloc_error abort
+          // (surfaced as a bare wasm `unreachable`). 256MB gives headroom for 8
+          // threads. (Shared memory reserves this as virtual address space only.)
+          '-C target-feature=+atomics,+bulk-memory -C link-arg=--shared-memory -C link-arg=--import-memory -C link-arg=--max-memory=268435456 -C link-arg=--export=__heap_base -C link-arg=--export=__wasm_init_tls -C link-arg=--export=__tls_size -C link-arg=--export=__tls_align -C link-arg=--export=__tls_base',
+      }
+    : {}),
 };
 
-const result = spawnSync(
-  'wasm-pack',
-  [
+const wasmPackArgs = [
     'build',
     '--release',
     '--target',
@@ -58,10 +76,25 @@ const result = spawnSync(
     '--',
     '--no-default-features',
     '--features',
-    'wasm,embed-tables',
-  ],
-  { cwd: engineDir, stdio: 'inherit', env },
-);
+    wasmFeatures,
+];
+if (threadedWasm) {
+  wasmPackArgs.push('-Z', 'build-std=panic_abort,std');
+}
+const wasmPackCommand = threadedWasm ? 'rustup' : 'wasm-pack';
+const wasmPackCommandArgs = threadedWasm
+  ? ['run', 'nightly', 'wasm-pack', ...wasmPackArgs]
+  : wasmPackArgs;
+
+if (threadedWasm) {
+  console.log('[build:wasm] threaded wasm: enabled (wasm-bindgen-rayon + SharedArrayBuffer)');
+}
+
+const result = spawnSync(wasmPackCommand, wasmPackCommandArgs, {
+  cwd: engineDir,
+  stdio: 'inherit',
+  env,
+});
 
 if (result.status !== 0) {
   process.exit(result.status ?? 1);
@@ -76,37 +109,16 @@ mkdirSync(publicWasmDir, { recursive: true });
 
 const liveWeightsPath = path.join(weightSrc, 'net_weights.bin');
 const weightsLiveSha256 = sha256File(liveWeightsPath);
-const weightsFrozenSha256 = sha256File(path.join(weightSrc, 'net_weights_frozen.bin'));
-
-const netWeightByteLen = readFileSync(liveWeightsPath).byteLength;
-
-let weightsMediumSha256 = null;
-let weightsMediumBytes = null;
-const mediumSrc = path.join(weightSrc, 'net_weights_medium.bin');
-if (existsSync(mediumSrc)) {
-  const mediumBytes = readFileSync(mediumSrc);
-  weightsMediumBytes = mediumBytes.byteLength;
-  if (mediumBytes.byteLength !== netWeightByteLen) {
-    console.warn(
-      `[build:wasm] net_weights_medium.bin size ${mediumBytes.byteLength} != live weights ${netWeightByteLen}`,
-    );
-  }
-  copyFileSync(mediumSrc, path.join(weightsDir, 'net_weights_medium.bin'));
-  weightsMediumSha256 = sha256File(mediumSrc);
-  console.log('[build:wasm] copied net_weights_medium.bin → public/weights/');
-}
 
 const buildMeta = {
-  engine_version: 'titanium-v15',
+  engine_version: 'titanium-v16',
   git_commit: commit,
   build_timestamp: buildTimestamp,
   wasm_sha256: wasmSha256,
   wasm_bytes: readFileSync(wasmPath).byteLength,
   weights_live_sha256: weightsLiveSha256,
-  weights_frozen_sha256: weightsFrozenSha256,
-  weights_medium_sha256: weightsMediumSha256,
-  weights_medium_bytes: weightsMediumBytes,
-  features: 'wasm,embed-tables',
+  features: wasmFeatures,
+  wasm_threads: threadedWasm,
   engine_dir: engineDir,
 };
 
@@ -123,6 +135,31 @@ glue = glue.replace(
   `module_or_path = new URL('titanium_bg.wasm?v=${wasmBust}', import.meta.url);`,
 );
 writeFileSync(gluePath, glue);
+
+if (threadedWasm) {
+  const snippetRoot = path.join(outDir, 'snippets');
+  const helperDirs = existsSync(snippetRoot)
+    ? readdirSync(snippetRoot).filter((name) => name.startsWith('wasm-bindgen-rayon-'))
+    : [];
+  for (const dir of helperDirs) {
+    const helperPath = path.join(snippetRoot, dir, 'src', 'workerHelpers.js');
+    if (!existsSync(helperPath)) {
+      continue;
+    }
+    let helper = readFileSync(helperPath, 'utf8');
+    if (!helper.includes("typeof self !== 'undefined'")) {
+      helper = helper.replace(
+        "waitForMsgType(self, 'wasm_bindgen_worker_init').then(async ({ init, receiver }) => {",
+        "if (typeof self !== 'undefined' && typeof self.addEventListener === 'function') {\nwaitForMsgType(self, 'wasm_bindgen_worker_init').then(async ({ init, receiver }) => {",
+      );
+      helper = helper.replace(
+        /(  pkg\.wbg_rayon_start_worker\(receiver\);\r?\n}\);\r?\n)(\r?\n\/\/ Note: this is never used)/,
+        '$1}\n$2',
+      );
+      writeFileSync(helperPath, helper);
+    }
+  }
+}
 
 console.log(`[build:wasm] wasm sha256: ${wasmSha256}`);
 console.log(`[build:wasm] commit: ${commit}`);

@@ -36,14 +36,8 @@ function assertEqual(actual, expected, label) {
 
 console.log('\n[backend] registry entries');
 assert(getEngineEntry(PlayerType.Human), 'human');
-assert(getEngineEntry(PlayerType.TitaniumMinimax), 'titanium live');
 assert(getEngineEntry(PlayerType.TitaniumV16), 'titanium v16');
 assert(getEngineEntry(PlayerType.KaAI), 'ka');
-assertEqual(
-  getEngineEntry(PlayerType.TitaniumMinimax).displayName,
-  'Titanium v15',
-  'titanium v15 registry label',
-);
 assertEqual(
   getEngineEntry(PlayerType.TitaniumV16).displayName,
   'Titanium v16',
@@ -53,11 +47,6 @@ assertEqual(
   getEngineEntry(PlayerType.KaAI).backend,
   EngineBackendKind.REMOTE_WS,
   'ka remote',
-);
-assertEqual(
-  getEngineEntry(PlayerType.TitaniumMinimax).backend,
-  EngineBackendKind.LOCAL_WASM,
-  'titanium wasm',
 );
 assertEqual(
   getEngineEntry(PlayerType.TitaniumV16).backend,
@@ -73,19 +62,17 @@ assertEqual(
 );
 
 console.log('\n[backend] local titanium is not remote');
-const tiEntry = getEngineEntryForPlayer(PlayerType.TitaniumMinimax, {});
-assertEqual(tiEntry.backend, EngineBackendKind.LOCAL_WASM, 'ti local wasm');
 const ti16Entry = getEngineEntryForPlayer(PlayerType.TitaniumV16, {});
 assertEqual(ti16Entry.backend, EngineBackendKind.LOCAL_WASM, 'ti16 local wasm');
 const identity = validateEngineResultIdentity({
-  engineEntry: tiEntry,
+  engineEntry: ti16Entry,
   resultContext: {
     requestSeq: 1,
     gameGeneration: 0,
     positionKey: 'wp=e2|bp=e9|stm=1|ww=10|bw=10|h=|v=',
     seatIndex: 0,
     sideToMove: 1,
-    engineId: PlayerType.TitaniumMinimax,
+    engineId: PlayerType.TitaniumV16,
   },
   currentContext: {
     requestSeq: 1,
@@ -93,7 +80,7 @@ const identity = validateEngineResultIdentity({
     positionKey: 'wp=e2|bp=e9|stm=1|ww=10|bw=10|h=|v=',
     seatIndex: 0,
     sideToMove: 1,
-    engineId: PlayerType.TitaniumMinimax,
+    engineId: PlayerType.TitaniumV16,
   },
 });
 assert(identity.ok, 'local without connectionEpoch accepted');

@@ -10,6 +10,7 @@ let catWorkerFailed = false;
 const catWorkerPending = new Map();
 const catSnapshotCache = new Map();
 const CAT_SNAPSHOT_CACHE_LIMIT = 16;
+const WASM_THREAD_STACK_SIZE = 4 << 20;
 
 function catMovesKey(algebraicMoves) {
   return (algebraicMoves ?? []).join('|');
@@ -116,7 +117,7 @@ async function fetchCatSnapshotFromWorker(algebraicMoves) {
 async function fetchCatSnapshotFromWasm(algebraicMoves) {
   if (!wasmCatInitPromise) {
     wasmCatInitPromise = import('../wasm/titanium/titanium.js').then(async (mod) => {
-      await mod.default();
+      await mod.default({ thread_stack_size: WASM_THREAD_STACK_SIZE });
       return mod;
     });
   }

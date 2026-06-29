@@ -9,11 +9,12 @@ import init, { cat_snapshot, wasm_build_identity_json } from '../wasm/titanium/t
 import wasmUrl from '../wasm/titanium/titanium_bg.wasm?url';
 import buildMeta from '../wasm/titanium/build-meta.json';
 
+const WASM_THREAD_STACK_SIZE = 4 << 20;
 let initPromise = null;
 
 async function ensureInit() {
   if (!initPromise) {
-    initPromise = init({ module_or_path: wasmUrl });
+    initPromise = init({ module_or_path: wasmUrl, thread_stack_size: WASM_THREAD_STACK_SIZE });
   }
   await initPromise;
 }

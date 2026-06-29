@@ -1,33 +1,36 @@
 /**
- * Titanium v15/v16 in a Web Worker — Rust engine compiled to WebAssembly.
- * Tiers 0–2 = v15 NNUE (easy/medium/hard); tiers 3–5 = v16 CAT LMR ceilings.
+ * Titanium v16 in a Web Worker. Rust owns the engine and Lazy SMP threads;
+ * JS only starts/stops search and receives progress.
  */
 
-import init, { WasmEngine } from '../wasm/titanium/titanium.js';
+import init, * as titaniumWasm from '../wasm/titanium/titanium.js';
 import wasmUrl from '../wasm/titanium/titanium_bg.wasm?url';
 import buildMeta from '../wasm/titanium/build-meta.json';
 
+const { WasmEngine } = titaniumWasm;
+const WASM_THREAD_STACK_SIZE = 4 << 20;
+
 let initPromise = null;
-/** @type {Map<string, import('../wasm/titanium/titanium.js').WasmEngine>} */
+let threadPoolPromise = null;
+let threadPoolWorkers = 0;
+/**
+ * One engine at a time. A worker hosts exactly one live WasmEngine instance;
+ * switching profile drops the previous one. (Previously this warmed six
+ * instances that shared a single rayon pool — the source of the wasm-bindgen
+ * "recursive use of an object" aliasing crash.)
+ * @type {Map<string, import('../wasm/titanium/titanium.js').WasmEngine>}
+ */
 const engines = new Map();
 
 function tierForEngineMode(engineMode, catLmrCeiling) {
-  if (engineMode === 'titanium-v15-frozen') {
-    return 0;
+  void engineMode;
+  if (catLmrCeiling === 500) {
+    return 3;
   }
-  if (engineMode === 'titanium-v15-medium') {
-    return 1;
+  if (catLmrCeiling === 1000) {
+    return 5;
   }
-  if (engineMode === 'titanium-v16') {
-    if (catLmrCeiling === 500) {
-      return 3;
-    }
-    if (catLmrCeiling === 1000) {
-      return 5;
-    }
-    return 4;
-  }
-  return 2;
+  return 4;
 }
 
 function engineCacheKey(engineMode, catLmrCeiling) {
@@ -37,21 +40,62 @@ function engineCacheKey(engineMode, catLmrCeiling) {
   return engineMode;
 }
 
+function ensureEngineInstance(engineMode = 'titanium-v16', catLmrCeiling = 800) {
+  const key = engineCacheKey(engineMode, catLmrCeiling);
+  if (engines.has(key)) {
+    return engines.get(key);
+  }
+  // One engine at a time: free any previously-built instance before allocating
+  // a new profile so a worker never holds more than one live WasmEngine.
+  for (const [staleKey, engine] of engines) {
+    if (staleKey !== key) {
+      engine.free?.();
+      engines.delete(staleKey);
+    }
+  }
+  const tier = tierForEngineMode(engineMode, catLmrCeiling);
+  const engine = new WasmEngine(tier);
+  engines.set(key, engine);
+  return engine;
+}
+
+async function ensureThreadPool(requestedThreads = 1) {
+  await ensureInit();
+  const initThreadPool = titaniumWasm.initThreadPool;
+  if (typeof initThreadPool !== 'function' || requestedThreads <= 1) {
+    return false;
+  }
+  const workers = Math.max(1, requestedThreads - 1);
+  if (threadPoolPromise && threadPoolWorkers === workers) {
+    await threadPoolPromise;
+    return true;
+  }
+  if (threadPoolPromise && threadPoolWorkers !== workers) {
+    throw new Error('Titanium WASM thread pool size changed; reload the engine worker');
+  }
+  if (!self.crossOriginIsolated || typeof SharedArrayBuffer === 'undefined') {
+    // No cross-origin isolation (e.g. GitHub Pages without a COI service
+    // worker). Run single-threaded instead of crashing the search.
+    return false;
+  }
+  threadPoolWorkers = workers;
+  threadPoolPromise = initThreadPool(workers);
+  await threadPoolPromise;
+  return true;
+}
+
 async function ensureInit() {
   if (!initPromise) {
-    initPromise = init({ module_or_path: wasmUrl });
+    initPromise = init({ module_or_path: wasmUrl, thread_stack_size: WASM_THREAD_STACK_SIZE });
   }
   await initPromise;
 }
 
-async function ensureEngine(engineMode = 'titanium-v15', catLmrCeiling = 800) {
+async function ensureEngine(engineMode = 'titanium-v16', catLmrCeiling = 800, threads = 1) {
   await ensureInit();
-  const key = engineCacheKey(engineMode, catLmrCeiling);
-  if (!engines.has(key)) {
-    const tier = tierForEngineMode(engineMode, catLmrCeiling);
-    engines.set(key, new WasmEngine(tier));
-  }
-  return engines.get(key);
+  const engine = ensureEngineInstance(engineMode, catLmrCeiling);
+  await ensureThreadPool(threads);
+  return engine;
 }
 
 function parseProgressJson(jsonStr) {
@@ -62,26 +106,30 @@ function parseProgressJson(jsonStr) {
   }
 }
 
-async function handleInit(engineMode, workerSlot, catLmrCeiling) {
+async function handleInit(engineMode, catLmrCeiling, threads = 1) {
   const t0 = performance.now();
-  await ensureEngine(engineMode, catLmrCeiling);
+  await ensureInit();
+  ensureEngineInstance(engineMode, catLmrCeiling);
+  const threaded = await ensureThreadPool(threads);
   const initMs = performance.now() - t0;
   const rustIdentity = buildMeta;
   console.log('[titanium-wasm-worker] ready', {
-    workerSlot,
     engineMode,
     catLmrCeiling,
+    threads,
+    threaded,
     initMs,
     buildMeta,
     rustIdentity: rustIdentity,
   });
   self.postMessage({
     type: 'ready',
-    workerId: workerSlot,
     initMs,
-    weightsInInit: engineMode === 'titanium-v15-medium',
+    weightsInInit: false,
     engineMode,
     catLmrCeiling,
+    threads,
+    threaded,
     buildMeta,
     rustIdentity,
   });
@@ -93,12 +141,20 @@ async function handleSearch(eventData) {
     timeMs,
     maxNodes,
     isFreshGame,
-    engineMode = 'titanium-v15',
+    engineMode = 'titanium-v16',
     catLmrCeiling = 800,
-    workerSlot = 0,
+    threads = 1,
     streamProgress = true,
   } = eventData;
-  const wasm = await ensureEngine(engineMode, catLmrCeiling);
+  // Threads only run under cross-origin isolation (SharedArrayBuffer + rayon
+  // pool). Without it, force single-thread so the search never reaches for an
+  // uninitialized pool.
+  const canThread =
+    self.crossOriginIsolated &&
+    typeof SharedArrayBuffer !== 'undefined' &&
+    typeof titaniumWasm.initThreadPool === 'function';
+  const effectiveThreads = canThread ? Math.max(1, threads) : 1;
+  const wasm = await ensureEngine(engineMode, catLmrCeiling, effectiveThreads);
   if (isFreshGame) {
     wasm.reset();
   }
@@ -111,7 +167,7 @@ async function handleSearch(eventData) {
 
   let lastProgress = null;
   const onProgress =
-    streamProgress && workerSlot === 0
+    streamProgress
       ? (jsonStr) => {
           const data = parseProgressJson(jsonStr);
           if (!data) {
@@ -121,7 +177,6 @@ async function handleSearch(eventData) {
           self.postMessage({
             type: 'info',
             thinking: true,
-            workerId: workerSlot,
             ...data,
             mode: data.engine ?? data.stoppedBy ?? engineMode,
           });
@@ -131,67 +186,101 @@ async function handleSearch(eventData) {
   const movetime = Math.max(1, timeMs ?? 10_000);
   const cap = maxNodes ?? 0;
 
-  function runSearch(engine) {
-    if (workerSlot === 0) {
-      return engine.go(movetime, cap, onProgress);
+  function runSearch(engine, requestedThreads = effectiveThreads) {
+    if (typeof engine.go_threads_json === 'function') {
+      const json = engine.go_threads_json(movetime, cap, requestedThreads, onProgress);
+      const data = JSON.parse(json);
+      return {
+        best: data.move,
+        depth: data.depth,
+        nodes: Number(data.nodes ?? 0),
+        stopReason: data.stopReason,
+        usedJsonApi: true,
+      };
     }
-    if (typeof engine.go_with_profile === 'function') {
-      return engine.go_with_profile(movetime, cap, workerSlot, 0, 0, onProgress);
+    if (typeof engine.go_threads === 'function') {
+      return {
+        best: engine.go_threads(movetime, cap, requestedThreads, onProgress),
+        usedJsonApi: false,
+      };
     }
-    return engine.go(movetime, cap, onProgress);
+    return {
+      best: engine.go(movetime, cap, onProgress),
+      usedJsonApi: false,
+    };
   }
 
   const searchT0 = performance.now();
-  let best;
+  let searchResult;
+  const helperStartsBefore =
+    typeof titaniumWasm.helper_starts === 'function' ? titaniumWasm.helper_starts() : 0;
   try {
-    best = runSearch(wasm);
+    searchResult = runSearch(wasm);
   } catch (firstErr) {
     const msg = firstErr?.message ?? String(firstErr);
     const isTrap =
       firstErr instanceof WebAssembly.RuntimeError || /unreachable|panic/i.test(msg);
-    if (!isTrap || engineMode === 'titanium-v15-frozen') {
+    const isAliasing = /recursive use of an object|unsafe aliasing/i.test(msg);
+    // Single-threaded retry on a trap or a wasm-bindgen aliasing error: same
+    // engine, threads=1. This removes the multi-thread path that triggers the
+    // aliasing crash without swapping in a different engine.
+    if (!isTrap && !isAliasing) {
       throw firstErr;
     }
-    const fallback = await ensureEngine('titanium-v15-frozen');
     if (isFreshGame) {
-      fallback.reset();
+      wasm.reset();
     } else if (history.length > 0) {
-      fallback.position(history.join(' '));
+      wasm.position(history.join(' '));
     }
-    best = runSearch(fallback);
+    searchResult = runSearch(wasm, 1);
   }
+  const best = searchResult.best;
   const searchWallMs = performance.now() - searchT0;
+  const helperStartsTotal =
+    typeof titaniumWasm.helper_starts === 'function' ? titaniumWasm.helper_starts() : 0;
+  const helperStarts =
+    helperStartsTotal >= helperStartsBefore ? helperStartsTotal - helperStartsBefore : helperStartsTotal;
 
   if (!best || best === '(none)') {
     self.postMessage({
       type: 'error',
-      workerId: workerSlot,
       message: 'WASM engine returned no legal move',
     });
     return;
   }
 
   const depth =
+    searchResult.depth ??
     (typeof wasm.last_search_depth === 'function' ? wasm.last_search_depth() : undefined) ??
     lastProgress?.searchDepth;
   const nodes =
+    searchResult.nodes ??
     (typeof wasm.last_search_nodes === 'function' ? Number(wasm.last_search_nodes()) : undefined) ??
     lastProgress?.nodes;
   const stopReason =
-    typeof wasm.last_stop_reason === 'function' ? wasm.last_stop_reason() : undefined;
+    searchResult.stopReason ??
+    (typeof wasm.last_stop_reason === 'function' ? wasm.last_stop_reason() : undefined);
 
   self.postMessage({
     type: 'bestmove',
     algebraicMove: best,
-    workerId: workerSlot,
     depth,
     nodes,
+    helperStarts,
+    helperStartsTotal,
+    requestedThreads: threads,
+    effectiveThreads,
+    threaded: effectiveThreads > 1,
     stopReason,
     searchWallMs,
     stoppedBy: engineMode,
     mode: engineMode,
     catLmrCeiling: engineMode === 'titanium-v16' ? catLmrCeiling : undefined,
     nodeSource: 'bestmove_final',
+    totalNodes: lastProgress?.totalNodes,
+    totalNodesAcrossWorkers: lastProgress?.totalNodesAcrossWorkers,
+    mainThreadNodes: lastProgress?.mainThreadNodes,
+    helperNodes: lastProgress?.helperNodes,
     searchDepth: lastProgress?.searchDepth,
     rootScore: lastProgress?.rootScore,
     whiteDist: lastProgress?.whiteDist,
@@ -206,12 +295,11 @@ async function handleSearch(eventData) {
 
 self.onmessage = async (event) => {
   const data = event.data ?? {};
-  const workerSlot = data.workerSlot ?? data.workerId ?? 0;
-  const engineMode = data.engineMode ?? 'titanium-v15';
+  const engineMode = data.engineMode ?? 'titanium-v16';
   const catLmrCeiling = data.catLmrCeiling ?? 800;
   try {
     if (data.op === 'init') {
-      await handleInit(engineMode, workerSlot, catLmrCeiling);
+      await handleInit(engineMode, catLmrCeiling, data.threads ?? 1);
       return;
     }
     await handleSearch(data);
@@ -221,8 +309,8 @@ self.onmessage = async (event) => {
       (err instanceof WebAssembly.RuntimeError ? 'WASM runtime error (engine panic)' : String(err));
     self.postMessage({
       type: 'error',
-      workerId: workerSlot,
       message,
+      stack: err?.stack,
     });
   }
 };

@@ -10,15 +10,14 @@ const params = new URLSearchParams(location.search);
 const TIME_SEC = Number(params.get('timeSec') || 10);
 const RUNS = Number(params.get('runs') || 1);
 const AUTO = params.get('auto') === '1';
-const WASM_WORKERS = 1;
+const WASM_THREADS = Math.max(1, Number(params.get('threads') || 8));
 const NET = params.get('net') || 'easy';
 
-const ENGINE_CONFIG = { engineMode: 'titanium-v15-frozen', kind: 'titanium' };
+const ENGINE_CONFIG = { engineMode: 'titanium-v16', kind: 'titanium', cores: WASM_THREADS };
 
 function engineModeForNet(net) {
-  if (net === 'easy') return 'titanium-v15-frozen';
-  if (net === 'medium') return 'titanium-v15-medium';
-  return 'titanium-v15';
+  void net;
+  return 'titanium-v16';
 }
 
 function aiSettings() {
@@ -26,7 +25,7 @@ function aiSettings() {
     titaniumNet: NET,
     wallClockSeconds: TIME_SEC,
     visitsBudget: UNLIMITED_VISITS,
-    cores: WASM_WORKERS,
+    cores: WASM_THREADS,
   };
 }
 
@@ -45,22 +44,24 @@ function runSearch(client, { isFreshGame = false, awaitReady = true } = {}) {
     };
     client.onBestMove = () => {
       const pending = client.pendingRequest;
-      const worker0 = pending?.results?.get(0);
       const wallMs = performance.now() - (pending?.started ?? performance.now());
-      const selected = worker0?.nodes ?? finalInfo?.selectedWorkerNodes ?? 0;
-      const aggregate = finalInfo?.totalNodesAcrossWorkers ?? finalInfo?.nodes ?? selected;
+      const selected = finalInfo?.selectedWorkerNodes ?? finalInfo?.mainThreadNodes ?? finalInfo?.nodes ?? 0;
+      const aggregate = finalInfo?.totalNodesAcrossWorkers ?? finalInfo?.totalNodes ?? finalInfo?.nodes ?? selected;
       resolve({
-        algebraicMove: worker0?.algebraicMove,
-        depth: worker0?.depth ?? finalInfo?.searchDepth,
+        algebraicMove: finalInfo?.rootMove ?? String(finalInfo?.pv ?? '').trim().split(/\s+/)[0],
+        depth: finalInfo?.searchDepth,
         selectedWorkerNodes: selected,
         totalNodesAcrossWorkers: aggregate,
-        workerNodes: finalInfo?.workerNodes,
-        stopReason: worker0?.stopReason,
-        searchWallMs: worker0?.searchWallMs,
+        helperNodes: finalInfo?.helperNodes,
+        helperStarts: finalInfo?.helperStarts,
+        effectiveThreads: finalInfo?.effectiveThreads,
+        threaded: finalInfo?.threaded,
+        stopReason: finalInfo?.stoppedBy,
+        searchWallMs: finalInfo?.elapsedMs,
         clientWallMs: wallMs,
         initMs: pending?.initMs ?? 0,
         nodeSource: finalInfo?.nodeSource ?? 'bestmove',
-        wasmWorkers: WASM_WORKERS,
+        wasmThreads: WASM_THREADS,
         npsSelected: Math.round(selected / (wallMs / 1000)),
         npsAggregate: Math.round(aggregate / (wallMs / 1000)),
       });
@@ -122,7 +123,7 @@ async function main() {
     net: NET,
     engineMode: engineModeForNet(NET),
     position: 'startpos',
-    wasmWorkers: WASM_WORKERS,
+    wasmThreads: WASM_THREADS,
     singleWorker: await benchThreads(RUNS),
   };
   window.__BENCH_RESULTS__ = out;

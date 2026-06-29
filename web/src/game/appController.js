@@ -128,11 +128,23 @@ function buildThinkSeatSnapshot({
   rootScore,
   nodes,
   simulations,
+  selectedWorkerNodes,
+  totalNodes,
+  totalNodesAcrossWorkers,
+  mainThreadNodes,
+  helperNodes,
+  nodeSource,
+  estimatedTotalNodes,
   rootWinRate,
   stoppedBy,
   rootMoves,
   lmrProfile,
   lmrReSearches,
+  helperStarts,
+  helperStartsTotal,
+  requestedThreads,
+  effectiveThreads,
+  threaded,
   thinkMs,
 }) {
   const deep = deepestDepthEntry(depthLog);
@@ -149,11 +161,23 @@ function buildThinkSeatSnapshot({
     pv: deep?.pv ?? '',
     nodes: resolvedNodes,
     simulations: simulations ?? resolvedNodes,
+    selectedWorkerNodes: selectedWorkerNodes ?? null,
+    totalNodes: totalNodes ?? null,
+    totalNodesAcrossWorkers: totalNodesAcrossWorkers ?? null,
+    mainThreadNodes: mainThreadNodes ?? null,
+    helperNodes: helperNodes ? [...helperNodes] : null,
+    nodeSource: nodeSource ?? null,
+    estimatedTotalNodes: estimatedTotalNodes ?? null,
     rootWinRate,
     stoppedBy: stoppedBy ?? (live ? 'searching' : '?'),
     rootMoves: rootMoves ? [...rootMoves] : [],
     lmrProfile: lmrProfile ?? null,
     lmrReSearches: lmrReSearches ?? null,
+    helperStarts: helperStarts ?? null,
+    helperStartsTotal: helperStartsTotal ?? null,
+    requestedThreads: requestedThreads ?? null,
+    effectiveThreads: effectiveThreads ?? null,
+    threaded: threaded ?? null,
     depthLog: depthLog ? [...depthLog] : [],
     thinkMs: thinkMs ?? null,
   };
@@ -221,11 +245,11 @@ export class AppController {
     this.engines = new Map();
     this.engineConfigs = getAllEngineConfigs();
 
-    const v15Live = defaultPlayerAiSettings(PlayerType.TitaniumMinimax, this.engineConfigs);
+    const titaniumDefault = defaultPlayerAiSettings(PlayerType.TitaniumV16, this.engineConfigs);
     const persisted = loadPersistedPlaySettings();
     const playDefaults = {
-      players: [PlayerType.Human, PlayerType.TitaniumMinimax],
-      playerAiSettings: [null, { ...v15Live }],
+      players: [PlayerType.Human, PlayerType.TitaniumV16],
+      playerAiSettings: [null, { ...titaniumDefault }],
       playerAiSettingsMemory: [{}, {}],
     };
     const restored = persisted
@@ -424,10 +448,10 @@ export class AppController {
 
   restorePersistedPlayMatchup() {
     const persisted = loadPersistedPlaySettings();
-    const v15Live = defaultPlayerAiSettings(PlayerType.TitaniumMinimax, this.engineConfigs);
+    const titaniumDefault = defaultPlayerAiSettings(PlayerType.TitaniumV16, this.engineConfigs);
     const playDefaults = {
-      players: [PlayerType.Human, PlayerType.TitaniumMinimax],
-      playerAiSettings: [null, { ...v15Live }],
+      players: [PlayerType.Human, PlayerType.TitaniumV16],
+      playerAiSettings: [null, { ...titaniumDefault }],
       playerAiSettingsMemory: [{}, {}],
     };
     const restored = persisted
@@ -452,12 +476,12 @@ export class AppController {
   applyAnalysisCompareDefaults() {
     const v13Js = defaultPlayerAiSettings(PlayerType.AceV13, this.engineConfigs);
     v13Js.strengthLevel = 0;
-    const v15 = defaultPlayerAiSettings(PlayerType.TitaniumMinimax, this.engineConfigs);
-    this.settings.players = [PlayerType.AceV13, PlayerType.TitaniumMinimax];
-    this.settings.playerAiSettings = [v13Js, v15];
+    const titaniumDefault = defaultPlayerAiSettings(PlayerType.TitaniumV16, this.engineConfigs);
+    this.settings.players = [PlayerType.AceV13, PlayerType.TitaniumV16];
+    this.settings.playerAiSettings = [v13Js, titaniumDefault];
     const memory = [{}, {}];
     memory[0][PlayerType.AceV13] = { ...v13Js };
-    memory[1][PlayerType.TitaniumMinimax] = { ...v15 };
+    memory[1][PlayerType.TitaniumV16] = { ...titaniumDefault };
     this.settings.playerAiSettingsMemory = memory;
     this.destroyAllEngines();
   }
@@ -1195,8 +1219,9 @@ export class AppController {
         const mode = resolveTitaniumEngineMode(ai, playerType, this.engineConfigs);
         const catLmrCeiling =
           playerType === PlayerType.TitaniumV16 ? resolveCatLmrCeiling(ai) : 800;
+        const threads = resolveCores(ai);
         tasks.push(
-          engine.prewarm(mode, catLmrCeiling).catch((err) => {
+          engine.prewarm(mode, catLmrCeiling, threads).catch((err) => {
             console.warn(`Titanium WASM prewarm failed for seat ${seat}`, err);
           }),
         );
@@ -1807,6 +1832,11 @@ export class AppController {
             rootMove: info.rootMove ?? this.liveSearch?.rootMove,
             lmrProfile: info.lmrProfile ?? this.liveSearch?.lmrProfile,
             lmrReSearches: info.lmrReSearches ?? this.liveSearch?.lmrReSearches,
+            helperStarts: info.helperStarts ?? this.liveSearch?.helperStarts,
+            helperStartsTotal: info.helperStartsTotal ?? this.liveSearch?.helperStartsTotal,
+            requestedThreads: info.requestedThreads ?? this.liveSearch?.requestedThreads,
+            effectiveThreads: info.effectiveThreads ?? this.liveSearch?.effectiveThreads,
+            threaded: info.threaded ?? this.liveSearch?.threaded,
             rootScore: liveRootScore,
             elapsedMs: info.elapsedMs ?? this.liveSearch?.elapsedMs,
             rolloutVerdict: info.rolloutVerdict ?? this.liveSearch?.rolloutVerdict,
@@ -2572,7 +2602,10 @@ export class AppController {
         nodes: si.nodes,
         simulations: si.simulations,
         selectedWorkerNodes: si.selectedWorkerNodes,
+        totalNodes: si.totalNodes,
         totalNodesAcrossWorkers: si.totalNodesAcrossWorkers,
+        mainThreadNodes: si.mainThreadNodes,
+        helperNodes: si.helperNodes,
         nodeSource: si.nodeSource,
         estimatedTotalNodes: false,
         progress: si.progress,
@@ -2581,6 +2614,11 @@ export class AppController {
         rootMoves: si.rootMoves,
         lmrProfile: si.lmrProfile,
         lmrReSearches: si.lmrReSearches,
+        helperStarts: si.helperStarts,
+        helperStartsTotal: si.helperStartsTotal,
+        requestedThreads: si.requestedThreads,
+        effectiveThreads: si.effectiveThreads,
+        threaded: si.threaded,
         engine: completedEngineLabel,
         thinkMs,
       });
@@ -2600,6 +2638,11 @@ export class AppController {
         rootMoves: si.rootMoves ? [...si.rootMoves] : [],
         lmrProfile: si.lmrProfile ?? null,
         lmrReSearches: si.lmrReSearches ?? null,
+        helperStarts: si.helperStarts ?? null,
+        helperStartsTotal: si.helperStartsTotal ?? null,
+        requestedThreads: si.requestedThreads ?? null,
+        effectiveThreads: si.effectiveThreads ?? null,
+        threaded: si.threaded ?? null,
         thinkMs,
       });
     }

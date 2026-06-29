@@ -156,9 +156,6 @@ function shortEngineName(playerType) {
   if (playerType === PlayerType.TitaniumV16) {
     return 'Titanium v16';
   }
-  if (playerType === PlayerType.TitaniumMinimax || playerType === PlayerType.TitaniumV15Frozen) {
-    return 'Titanium v15';
-  }
   if (playerType === PlayerType.GorisansonMCTS) return 'Gorisanson';
   if (playerType === PlayerType.KaAI) return 'Ka';
   if (playerType === PlayerType.ZeroInk) return 'zero.ink';

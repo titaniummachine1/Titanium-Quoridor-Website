@@ -105,21 +105,10 @@ export function migrateTitaniumNet(net) {
 }
 
 export function resolveTitaniumEngineMode(aiSettings, playerType, engineConfigs) {
-  if (playerType === PlayerType.TitaniumV16) {
-    return 'titanium-v16';
-  }
-  if (playerType === PlayerType.TitaniumV15Frozen) {
-    return 'titanium-v15-frozen';
-  }
-  const config = getEngineConfig(playerType, engineConfigs);
-  const net = migrateTitaniumNet(aiSettings?.titaniumNet ?? TITANIUM_NET_HARD);
-  if (net === TITANIUM_NET_EASY || config?.engineMode === 'titanium-v15-frozen') {
-    return 'titanium-v15-frozen';
-  }
-  if (net === TITANIUM_NET_MEDIUM || config?.engineMode === 'titanium-v15-medium') {
-    return 'titanium-v15-medium';
-  }
-  return config?.engineMode ?? 'titanium-v15';
+  void aiSettings;
+  void playerType;
+  void engineConfigs;
+  return 'titanium-v16';
 }
 
 /** v16 CAT LMR ceiling (cm) from Easy/Medium/Hard difficulty. */
@@ -215,22 +204,22 @@ export function normalizePlayerType(playerType) {
     return PlayerType.AceV13;
   }
   if (
+    playerType === 'titanium' ||
+    playerType === 'titanium-minimax' ||
+    playerType === 'titanium-v15-frozen'
+  ) {
+    return PlayerType.TitaniumV16;
+  }
+  // Retired ACE/Quoridor variants migrate to the current Titanium line.
+  if (
     playerType === PlayerType.AceV8 ||
     playerType === PlayerType.AceV8Ti ||
     playerType === PlayerType.AceV8TiPmc ||
     playerType === PlayerType.AceV8Js ||
-    playerType === PlayerType.QuoridorV3
+    playerType === PlayerType.QuoridorV3 ||
+    playerType === PlayerType.AceV10
   ) {
-    return PlayerType.TitaniumMinimax;
-  }
-  if (playerType === PlayerType.TitaniumV15Frozen) {
-    return PlayerType.TitaniumMinimax;
-  }
-  if (playerType === PlayerType.Titanium) {
-    return PlayerType.TitaniumMinimax;
-  }
-  if (playerType === PlayerType.AceV10) {
-    return PlayerType.TitaniumMinimax;
+    return PlayerType.TitaniumV16;
   }
   return playerType;
 }
@@ -301,10 +290,7 @@ export function isLocalEngine(playerType, engineConfigs) {
 
 export function isTitaniumEngine(playerType, engineConfigs) {
   return (
-    playerType === PlayerType.Titanium ||
-    playerType === PlayerType.TitaniumMinimax ||
     playerType === PlayerType.TitaniumV16 ||
-    playerType === PlayerType.TitaniumV15Frozen ||
     getEngineConfig(playerType, engineConfigs)?.kind === 'titanium'
   );
 }

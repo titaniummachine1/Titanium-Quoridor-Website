@@ -45,8 +45,14 @@ assert(
 console.log('\n[isolate] Titanium native opt-in and static/WASM routing');
 const viteSrc = readSrc('../vite.config.js');
 const proxySrc = readSrc('../vite-titanium-proxy.mjs');
+const buildWasmSrc = readSrc('../scripts/build-wasm.mjs');
 const runtimeSrc = readSrc('lib/titaniumRuntime.js');
 assert(viteSrc.includes('titaniumProxyPlugin'), 'dev server exposes native titanium proxy');
+assert(
+  viteSrc.includes('Cross-Origin-Opener-Policy') &&
+    viteSrc.includes('Cross-Origin-Embedder-Policy'),
+  'dev server sends isolation headers for threaded WASM',
+);
 assert(
   runtimeSrc.includes('import.meta.env.PROD'),
   'production build never enables native titanium',
@@ -95,37 +101,63 @@ const tiWasmWorker = readSrc('workers/titaniumWasmWorker.js');
 const aceWasmClient = readSrc('lib/aceRustWasmClient.js');
 assert(
   tiWasmClient.includes('resolveTitaniumSearchCores'),
-  'titanium WASM uses shared search core resolver',
+  'titanium WASM resolves configured engine thread count',
 );
 assert(tiWasmClient.includes('await this.initWorkers'), 'titanium WASM awaits worker init before search');
 assert(tiWasmWorker.includes('wasmUrl'), 'titanium WASM worker imports hashed wasm asset URL');
 assert(tiWasmWorker.includes('ensureInit'), 'titanium WASM worker defines wasm init helper');
 assert(aceWasmClient.includes('new AceRustWasmWorker()'), 'ace rust: own worker');
-
-console.log('\n[isolate] ACE v13 tiers are not Titanium live NNUE in engine routing');
-const engineSearch = readFileSync(
-  path.resolve(WEB_SRC, '../../../engine/src/titanium/search.rs'),
-  'utf8',
+assert(
+  tiWasmClient.includes('this.worker.postMessage({'),
+  'titanium WASM client sends one search command to one worker host',
 );
+assert(
+  tiWasmClient.includes('threads: this.threads'),
+  'titanium WASM passes configured threads into Rust instead of JS fanout',
+);
+assert(
+  tiWasmWorker.includes('go_threads_json(movetime, cap, requestedThreads, onProgress)'),
+  'titanium WASM worker calls standalone Rust API',
+);
+assert(
+  tiWasmWorker.includes('initThreadPool') && tiWasmWorker.includes('crossOriginIsolated'),
+  'titanium WASM worker initializes real wasm thread pool when exported',
+);
+assert(
+  buildWasmSrc.includes('TITANIUM_WASM_THREADS') &&
+    buildWasmSrc.includes('wasm-threads,embed-tables') &&
+    buildWasmSrc.includes('build-std=panic_abort,std'),
+  'build:wasm has explicit threaded WASM profile',
+);
+assert(
+  !tiWasmClient.includes('lmrBias') && !tiWasmWorker.includes('lmrBias'),
+  'titanium WASM JS layer does not own helper LMR profiles',
+);
+assert(
+  !tiWasmClient.includes('for (let workerId = 0; workerId < this.cores; workerId++)'),
+  'titanium WASM JS layer does not distribute search across workers',
+);
+
+console.log('\n[isolate] Titanium WASM routes through one v16 engine path');
 const engineWasm = readFileSync(
   path.resolve(WEB_SRC, '../../../engine/src/wasm.rs'),
   'utf8',
 );
-assert(
-  engineSearch.includes('with_ti_movegen_frozen'),
-  'ace-v13 frozen weight builder exists',
-);
-assert(
-  engineWasm.includes('"ace-v13" | "ace-v13-ti" => *TitaniumSearch::with_ti_movegen_frozen(g)'),
-  'ace-v13 WASM tiers map to frozen path',
+const engineCargo = readFileSync(
+  path.resolve(WEB_SRC, '../../../engine/Cargo.toml'),
+  'utf8',
 );
 assert(
   engineWasm.includes('grafted_v16'),
   'titanium-v16 WASM tier uses CAT LMR grafted_v16',
 );
 assert(
-  engineWasm.includes('TitaniumSearch::grafted(g, None)'),
-  'titanium-v15 still uses live grafted net',
+  engineCargo.includes('wasm-threads') && engineWasm.includes('think_with_threads'),
+  'threaded WASM profile routes go_threads into Titanium Lazy SMP',
+);
+assert(
+  !engineWasm.includes('titanium-v15') && !engineWasm.includes('grafted_frozen'),
+  'Titanium WASM glue has no v15/frozen runtime branch',
 );
 assert(
   tiWasmWorker.includes('tierForEngineMode'),

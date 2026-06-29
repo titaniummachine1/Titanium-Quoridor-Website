@@ -22,12 +22,15 @@ async function benchPkg(name) {
   const { default: init, WasmEngine } = await import(
     pathToFileURL(path.join(wasmDir, 'titanium.js')).href
   );
-  await init(wasmBytes);
+  await init({ module_or_path: wasmBytes, thread_stack_size: 4 << 20 });
   const rows = [];
   for (let i = 0; i < runs; i++) {
-    const engine = new WasmEngine(2);
+    const engine = new WasmEngine(4);
     const t0 = performance.now();
-    const mv = engine.go_with_profile(timeMs, 0, 0, 0, 0, undefined);
+    const mv =
+      typeof engine.go_threads === 'function'
+        ? engine.go_threads(timeMs, 0, 1, undefined)
+        : engine.go(timeMs, 0, undefined);
     const wallMs = performance.now() - t0;
     const nodes = Number(engine.last_search_nodes());
     rows.push({
