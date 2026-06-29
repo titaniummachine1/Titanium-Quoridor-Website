@@ -28,6 +28,8 @@ export function renderGameControls(container, state, controller) {
   const canRedo = !!state.canRedo;
   const undoPaused = controller._undoPaused ?? false;
   const catActive = state.settings?.showCatVision;
+  const lmrActive = state.settings?.showLmrVision;
+  const lmrAggr = Number(state.settings?.lmrAggressiveness ?? 3.0);
   const catVision = {
     showSquares: true,
     showWalls: true,
@@ -49,6 +51,7 @@ export function renderGameControls(container, state, controller) {
       <button type="button" class="btn btn--small game-controls__btn game-controls__btn--nav" data-action="redo" ${canRedo ? '' : 'disabled'} title="Redo next move (Right Arrow)" aria-label="Redo next move">→</button>
     </div>
     ${catActive ? renderCatVisionControls(catVision) : ''}
+    ${lmrActive ? renderLmrControls(lmrAggr) : ''}
     ${undoPaused ? '<div class="undo-pause-banner">Engine paused after undo — resuming shortly…</div>' : ''}
   `;
 
@@ -79,6 +82,18 @@ function renderCatVisionControls(catVision) {
         <span>Walls ${Math.round(catVision.wallOpacity * 100)}%</span>
         <button type="button" data-cat-step="wallOpacity" data-cat-delta="-0.1">-</button>
         <button type="button" data-cat-step="wallOpacity" data-cat-delta="0.1">+</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderLmrControls(aggr) {
+  return `
+    <div class="cat-vision-controls" aria-label="LMR vision settings">
+      <div class="cat-vision-controls__stepper" aria-label="CAT-LMR aggressiveness">
+        <span>LMR aggressiveness ${Number(aggr).toFixed(1)}</span>
+        <button type="button" data-lmr-step data-lmr-delta="-0.5" title="Less pruning">-</button>
+        <button type="button" data-lmr-step data-lmr-delta="0.5" title="More pruning">+</button>
       </div>
     </div>
   `;
@@ -136,6 +151,14 @@ function wireControls(container, state, controller) {
       const delta = Number(target.dataset.catDelta ?? 0);
       const value = Math.min(1.5, Math.max(0.25, Math.round((current + delta) * 10) / 10));
       controller.updateCatVisionSettings?.({ [key]: value });
+    });
+  });
+
+  container.querySelectorAll('[data-lmr-step]').forEach((button) => {
+    button.addEventListener('click', (event) => {
+      const delta = Number(event.currentTarget.dataset.lmrDelta ?? 0);
+      const current = Number(state.settings?.lmrAggressiveness ?? 3.0);
+      controller.setLmrAggressiveness?.(current + delta);
     });
   });
 }

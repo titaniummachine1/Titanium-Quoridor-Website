@@ -114,6 +114,17 @@ async function fetchCatSnapshotFromWorker(algebraicMoves) {
   return result.data;
 }
 
+/** LMR plan via the same warm CAT engine (no server needed — works on Pages). */
+export async function fetchLmrFromWorker(algebraicMoves, timeSec = 10, idDepth = 8, maxExtra = 3.0) {
+  await ensureCatWorkerReady();
+  const result = await postCatWorkerMessage(
+    'lmr',
+    { moves: algebraicMoves ?? [], timeMs: Math.round(timeSec * 1000), idDepth, maxExtra },
+    30_000,
+  );
+  return result.data;
+}
+
 async function fetchCatSnapshotFromWasm(algebraicMoves) {
   if (!wasmCatInitPromise) {
     wasmCatInitPromise = import('../wasm/titanium/titanium.js').then(async (mod) => {

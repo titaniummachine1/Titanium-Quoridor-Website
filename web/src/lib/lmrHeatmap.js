@@ -1,20 +1,17 @@
 /** LMR vision — root move depth / reduction overlays from engine JSON. */
 
+import { fetchLmrFromWorker } from './catHeatmap.js';
+
 /**
+ * Pre-search LMR plan via the warm WASM engine (works on static Pages — no
+ * server). `maxExtra` is the CAT-LMR aggressiveness slider.
  * @param {string[]} algebraicMoves
  * @param {number} [timeSec]
+ * @param {number} [idDepth]
+ * @param {number} [maxExtra]
  */
-export async function fetchLmrSnapshot(algebraicMoves, timeSec = 10, idDepth = 8) {
-  const res = await fetch('/api/titanium/lmr', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ moves: algebraicMoves, timeSec, idDepth }),
-  });
-  const data = await res.json();
-  if (!res.ok || data.error) {
-    throw new Error(data.error ?? `LMR request failed (${res.status})`);
-  }
-  return data;
+export async function fetchLmrSnapshot(algebraicMoves, timeSec = 10, idDepth = 8, maxExtra = 3.0) {
+  return fetchLmrFromWorker(algebraicMoves, timeSec, idDepth, maxExtra);
 }
 
 function normalizeLmrEntry(entry) {

@@ -269,6 +269,7 @@ export class AppController {
       catVision: { ...DEFAULT_CAT_VISION_SETTINGS },
       showLmrVision: false,
       lmrVisionShallow: false,
+      lmrAggressiveness: 3.0,
       showBestMoveHint: true,
       uiMode: 'play',
     };
@@ -999,6 +1000,18 @@ export class AppController {
     }
   }
 
+  /** CAT-LMR aggressiveness for the LMR vision (max extra reduction plies). */
+  setLmrAggressiveness(value) {
+    const v = Math.max(0, Math.min(6, Number(value) || 0));
+    this.settings.lmrAggressiveness = Math.round(v * 2) / 2; // 0.5 steps
+    this.lmrShallowByPosition.clear();
+    this._lmrShallowKey = null;
+    if (this.settings.showLmrVision) {
+      this.scheduleLmrRefresh();
+    }
+    this.onChange?.();
+  }
+
   lmrPlanDepthHint() {
     const posKey = this.lmrPositionKey();
     const fromSearch =
@@ -1124,7 +1137,8 @@ export class AppController {
     const posKey = this.lmrPositionKey();
     const timeSec = this.lmrTimeSecForPosition();
     const idDepth = this.lmrPlanDepthHint();
-    const fetchKey = `${posKey}|${timeSec}|d${idDepth}`;
+    const maxExtra = this.settings.lmrAggressiveness ?? 3.0;
+    const fetchKey = `${posKey}|${timeSec}|d${idDepth}|x${maxExtra}`;
     if (fetchKey === this._lmrShallowKey && this.lmrShallowByPosition.has(posKey)) {
       return;
     }
@@ -1137,7 +1151,7 @@ export class AppController {
 
     const moves = this.session.actions.map((action) => toAlgebraic(action));
     try {
-      const data = await fetchLmrSnapshot(moves, timeSec, idDepth);
+      const data = await fetchLmrSnapshot(moves, timeSec, idDepth, maxExtra);
       if (seq !== this._lmrFetchSeq) {
         return;
       }
