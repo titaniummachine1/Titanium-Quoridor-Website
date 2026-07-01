@@ -108,8 +108,11 @@ export class AceRustWasmEngineClient {
       const pending = this.pendingRequest;
       this.pendingRequest = null;
       this.setStatus('error');
-      const message =
-        event?.message ?? (typeof event === 'string' ? event : null) ?? 'ACE WASM worker crashed';
+      const parts = [];
+      if (event?.message) parts.push(event.message);
+      if (event?.filename) parts.push(`at ${event.filename}:${event.lineno ?? '?'}`);
+      if (event?.error?.stack) parts.push(event.error.stack);
+      const message = parts.join(' | ') || 'ACE WASM worker crashed';
       const error = new Error(message);
       pending?.onError?.(error);
       this.onError?.(error);

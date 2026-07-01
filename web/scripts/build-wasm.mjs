@@ -16,13 +16,13 @@ import { fileURLToPath } from 'node:url';
 
 const webDir = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const monorepoEngine = path.resolve(webDir, '..', '..', 'engine');
-const siteEngine = path.resolve(webDir, '..', 'engine');
 const outDir = path.join(webDir, 'src', 'wasm', 'titanium');
 const publicWasmDir = path.join(webDir, 'public', 'wasm');
 
-const engineDir = existsSync(path.join(monorepoEngine, 'Cargo.toml'))
-  ? monorepoEngine
-  : siteEngine;
+if (!existsSync(path.join(monorepoEngine, 'Cargo.toml'))) {
+  throw new Error(`Canonical engine missing: ${monorepoEngine}`);
+}
+const engineDir = monorepoEngine;
 console.log(`[build:wasm] engine dir: ${engineDir}`);
 
 function sha256File(filePath) {
@@ -42,6 +42,23 @@ const wasmBindgen =
 
 const buildTimestamp = new Date().toISOString();
 const commit = gitCommit();
+
+const exportScript = path.join(
+  monorepoEngine,
+  '..',
+  'training',
+  'tools',
+  'opening_book',
+  'export_opening_dag_bin.py',
+);
+const exportResult = spawnSync('python', [exportScript], {
+  cwd: monorepoEngine,
+  stdio: 'inherit',
+});
+if (exportResult.status !== 0) {
+  console.warn('[build:wasm] opening book export failed — using committed .bin if present');
+}
+
 const { RUSTFLAGS: _dropNativeRustflags, ...hostEnv } = process.env;
 const threadedWasm = process.env.TITANIUM_WASM_THREADS !== '0';
 const wasmFeatures = threadedWasm ? 'wasm-threads,embed-tables' : 'wasm,embed-tables';

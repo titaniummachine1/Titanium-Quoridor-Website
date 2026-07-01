@@ -385,24 +385,8 @@ function renderVisionSettings(selections) {
   );
 }
 
-function renderVisionTuningSliders(selections) {
-  const lmrAgg = Math.trunc(clampNumber(
-    selections.lmrAggressionPercent ?? LMR_AGGRESSION_DEFAULT,
-    LMR_AGGRESSION_MIN,
-    LMR_AGGRESSION_MAX,
-  ));
-  return (
-    renderVisionSlider(
-      'lmrAggressionPercent',
-      'LMR tuning (100% = default)',
-      lmrAgg,
-      LMR_AGGRESSION_MIN,
-      LMR_AGGRESSION_MAX,
-      LMR_AGGRESSION_STEP,
-      `${lmrAgg}%`,
-    ) +
-    '<p class="player-dialog__hint">Visualization only. -500% = absolute max cut, 0% = CAT-shaped max cut, -177% = engine default, 150% = full 10-ply depth.</p>'
-  );
+function renderLmrPlanHint() {
+  return '<p class="player-dialog__hint">Visualization only. Fixed 10-ply LMR plan: v15 baseline plus depth-1 dead-tail/backward overrides.</p>';
 }
 
 function renderVisionDetail(selections) {
@@ -413,7 +397,6 @@ function renderVisionDetail(selections) {
     };
     return (
       '<div class="player-dialog__vision-detail">' +
-        renderVisionTuningSliders(selections) +
         '<label class="player-dialog__option-row">' +
           '<input type="checkbox" data-cat-setting="showSquares"' + (catVision.showSquares ? ' checked' : '') + '>' +
           ' Squares' +
@@ -431,7 +414,7 @@ function renderVisionDetail(selections) {
   if (selections.visionMode === 'lmr') {
     return (
       '<div class="player-dialog__vision-detail">' +
-        renderVisionTuningSliders(selections) +
+        renderLmrPlanHint() +
       '</div>'
     );
   }

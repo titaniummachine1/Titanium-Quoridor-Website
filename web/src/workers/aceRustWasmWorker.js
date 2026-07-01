@@ -3,7 +3,7 @@
  * Streams iterative-deepening progress like Titanium WASM.
  */
 
-import init, { WasmAceEngine } from '../wasm/titanium/titanium.js';
+import init, { WasmAceEngine, last_panic } from '../wasm/titanium/titanium.js';
 
 const WASM_THREAD_STACK_SIZE = 4 << 20;
 let engine = null;
@@ -87,9 +87,9 @@ self.onmessage = async (event) => {
       elapsedMs: finalMeta.elapsedMs,
     });
   } catch (err) {
-    self.postMessage({
-      type: 'error',
-      message: err?.message ?? String(err),
-    });
+    const panic = typeof last_panic === 'function' ? last_panic() : '';
+    const base = err?.message ?? String(err);
+    const message = panic && !base.includes(panic) ? `${base} | ${panic}` : base;
+    self.postMessage({ type: 'error', message });
   }
 };

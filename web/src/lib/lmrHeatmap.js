@@ -4,8 +4,8 @@ import { fetchLmrFromWorker } from './catHeatmap.js';
 
 /**
  * Pre-search LMR plan via the warm WASM engine (works on static Pages — no
- * server). `lmrAggressionPercent` is LMR tuning: -500 = absolute max cut,
- * 0 = CAT-shaped max cut, -177 = current engine default, 150 = full depth.
+ * server). This is the fixed engine plan: ACE/v15 baseline LMR plus hard
+ * depth-1 overrides for dead CAT tail and backward moves.
  * @param {string[]} algebraicMoves
  * @param {number} [timeSec]
  * @param {number} [idDepth]
@@ -21,10 +21,26 @@ function num(entry, camel, snake, fallback = 0) {
 }
 
 function normalizeLmrEntry(entry) {
-  const reduction = num(entry, 'reduction', 'reduction', 0);
   const childFull = num(entry, 'childDepthFull', 'child_depth_full', 0);
+  const hardOverride = String(
+    entry.hardOverride ?? entry.hard_override ?? (entry.deadTail || entry.dead_tail ? 'deadTail' : 'none'),
+  );
+  const deadTail = hardOverride === 'deadTail';
+  const backwardMove = hardOverride === 'backwardMove';
+  const aceBaseReduction = num(entry, 'aceBaseReduction', 'ace_base_reduction', 0);
+  const finalReduction = num(
+    entry,
+    'finalReduction',
+    'final_reduction',
+    num(entry, 'reduction', 'reduction', 0),
+  );
   const childUsed = num(entry, 'childDepthUsed', 'child_depth_used', childFull);
-  const baselineReduction = num(entry, 'baselineReduction', 'baseline_reduction', 0);
+  const baselineReduction = num(
+    entry,
+    'baselineReduction',
+    'baseline_reduction',
+    aceBaseReduction,
+  );
   const baselineChildUsed = num(
     entry,
     'baselineChildDepthUsed',
@@ -39,20 +55,23 @@ function normalizeLmrEntry(entry) {
     tactical: Boolean(entry.tactical),
     hot: Boolean(entry.hot),
     cold: Boolean(entry.cold),
-    protected: Boolean(entry.protected),
     pruned: Boolean(entry.pruned),
-    baselineReductionFp: num(entry, 'baselineReductionFp', 'baseline_reduction_fp', 0),
+    aceBaseReduction,
+    hardOverride,
+    finalReduction,
+    baselineReductionFp: num(entry, 'baselineReductionFp', 'baseline_reduction_fp', aceBaseReduction),
     baselineReduction,
     baselineChildDepthFull: num(entry, 'baselineChildDepthFull', 'baseline_child_depth_full', childFull),
     baselineChildDepthUsed: baselineChildUsed,
-    requestedReductionFp: num(entry, 'requestedReductionFp', 'requested_reduction_fp', 0),
-    reduction,
+    requestedReductionFp: num(entry, 'requestedReductionFp', 'requested_reduction_fp', finalReduction),
+    reduction: finalReduction,
     childDepthFull: childFull,
     childDepthUsed: childUsed,
     reductionClamped: Boolean(entry.reductionClamped ?? entry.reduction_clamped),
     inFullWindow: Boolean(entry.inFullWindow ?? entry.in_full_window),
     attentionRatio: num(entry, 'attentionRatio', 'attention_ratio', 0),
-    deadTail: Boolean(entry.deadTail ?? entry.dead_tail),
+    deadTail,
+    backwardMove,
     score: entry.score ?? null,
     nodes: Number(entry.nodes ?? 0),
     sharePct: 0,
@@ -249,6 +268,32 @@ export function lmrCutIntensity(entry) {
     return 0;
   }
   return Math.min(1, Math.max(0, requested / maxSafeReduction(entry)));
+}
+
+/** 0 = dead tail / leaf, 1 = full planned search depth (childDepthUsed / childDepthFull). */
+export function lmrSearchDepthFraction(entry) {
+  if (!entry) {
+    return 1;
+  }
+  const full = Number(entry.childDepthFull) || 0;
+  const used = Number(entry.childDepthUsed);
+  if (!Number.isFinite(used) || full <= 0) {
+    return 1;
+  }
+  return Math.min(1, Math.max(0, used / full));
+}
+
+/** Board label: child ply searched (10 = full, 1 = min LMR, 0 = dead tail). */
+export function lmrDepthLabel(entry) {
+  if (!entry) {
+    return '';
+  }
+  const used = Number(entry.childDepthUsed);
+  if (Number.isFinite(used)) {
+    return String(Math.max(0, used));
+  }
+  const full = Number(entry.childDepthFull) || 0;
+  return full > 0 ? String(full) : '';
 }
 
 /**
@@ -490,9 +535,9 @@ export function lmrDepthStyle(entry, viz) {
   const ranges = viz?.ranges ?? computeLmrRanges([entry]);
   let painted;
   let mode;
-  if (entry.deadTail) {
+  if (entry.deadTail || entry.backwardMove) {
     painted = deadTailFill(alpha);
-    mode = 'dead-tail';
+    mode = entry.backwardMove ? 'backward-move' : 'dead-tail';
   } else if (!viz?.shallow && entry.searched && entry.nodes > 0) {
     const share = entry.effortBarPct ?? displayShareOf(entry);
     painted = shareFill(
@@ -500,6 +545,10 @@ export function lmrDepthStyle(entry, viz) {
       alpha,
     );
     mode = 'share';
+  } else if (viz?.shallow) {
+    const depthFrac = lmrSearchDepthFraction(entry);
+    painted = cutFill(1 - depthFrac, alpha);
+    mode = depthFrac <= 0 ? 'dead-tail' : depthFrac >= 0.99 ? 'full' : 'depth';
   } else if (lmrCutIntensity(entry) > 0) {
     painted = cutFill(lmrCutIntensity(entry), alpha);
     mode = 'cut';
@@ -514,7 +563,9 @@ export function lmrDepthStyle(entry, viz) {
     mode = 'full';
   }
   const label = entry.deadTail
-    ? `dead tail ≤10% · leaf (d0)`
+    ? `dead tail ≤10% · d${entry.childDepthUsed ?? 1}`
+    : entry.backwardMove
+    ? `backward move · d${entry.childDepthUsed ?? 1}`
     : entry.unsearched
     ? `plan only · req ${formatFp(entry.requestedReductionFp)} → −${entry.reduction} ply${used > 0 ? ` · child d${used}` : ''}`
     : entry.reduction > 0
@@ -538,12 +589,9 @@ export function lmrDisplayText(entry, viz) {
   if (!entry || !lmrEntryWorthShowing(entry, viz)) {
     return '';
   }
-  if (entry.deadTail) {
-    return String(Math.max(0, Number(entry.reduction) || 0));
-  }
-  const reduction = Number(entry.reduction);
-  if (Number.isFinite(reduction)) {
-    return String(Math.max(0, reduction));
+  const depthLabel = lmrDepthLabel(entry);
+  if (depthLabel !== '') {
+    return depthLabel;
   }
   // Live search overlay: node share when we have no depth label yet.
   if (!viz?.shallow && entry.nodes > 0) {
@@ -561,6 +609,9 @@ export function lmrSubLabel(entry, viz) {
   const depth = fmtDepth(entry.childDepthUsed);
   if (entry.deadTail) {
     parts.push('≤10%');
+  }
+  if (entry.backwardMove) {
+    parts.push('back');
   }
   if (!viz?.shallow && entry.nodes > 0 && depth) {
     parts.push(depth);

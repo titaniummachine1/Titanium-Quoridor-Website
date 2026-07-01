@@ -119,6 +119,25 @@ const bootstrap = new Function(
 
 const ace = bootstrap(postMessage, performance, algebraicToAceMove, aceMoveToAlgebraic);
 
+function workerErrorMessage(event) {
+  const parts = [];
+  if (event?.message) parts.push(event.message);
+  if (event?.filename) parts.push(`at ${event.filename}:${event.lineno ?? '?'}`);
+  if (event?.error?.stack) parts.push(event.error.stack);
+  return parts.join(' | ') || 'ACE v13 JS worker crashed';
+}
+
+self.addEventListener('error', (event) => {
+  self.postMessage({ type: 'error', message: workerErrorMessage(event) });
+});
+
+self.addEventListener('unhandledrejection', (event) => {
+  const reason = event?.reason;
+  const message =
+    reason?.stack ?? reason?.message ?? (reason != null ? String(reason) : 'unhandled rejection');
+  self.postMessage({ type: 'error', message });
+});
+
 self.onmessage = (ev) => {
   const data = ev.data;
   try {
@@ -148,6 +167,8 @@ self.onmessage = (ev) => {
       ms: result.ms,
     });
   } catch (err) {
-    postMessage({ type: 'error', message: String(err?.message || err) });
+    const message =
+      err?.stack ?? err?.message ?? (err != null ? String(err) : 'ACE v13 think failed');
+    postMessage({ type: 'error', message });
   }
 };

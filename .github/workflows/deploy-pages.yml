@@ -24,11 +24,13 @@ jobs:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: false
 
-      - name: Init engine submodule
-        run: git -c submodule.recurse=false submodule update --init --depth 1 engine
+      - name: Checkout engine
+        uses: actions/checkout@v4
+        with:
+          repository: titaniummachine1/titanium-quoridor
+          ref: main
+          path: engine
 
       - uses: dtolnay/rust-toolchain@nightly
         with:
@@ -50,12 +52,7 @@ jobs:
           VITE_BUILD_SHA: ${{ github.sha }}
           # wasm32 cross-compile — do not use target-cpu=native (native titanium.exe only).
           RUSTFLAGS: ""
-          # Single-thread build. The threaded build hard-crashes the worker during
-          # thread-pool init on some devices (SharedArrayBuffer/memory limits) — a
-          # hard WASM abort can't be caught and auto-recovered reliably. Until that
-          # is debugged on-device, ship single-thread (proven stable). Pages can't
-          # set COOP/COEP anyway. (COI service worker stays for the future.)
-          TITANIUM_WASM_THREADS: "0"
+          TITANIUM_WASM_THREADS: "1"
         run: |
           npm ci
           npm run build:pages

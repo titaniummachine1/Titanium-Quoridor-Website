@@ -1,22 +1,22 @@
 # Engine patches: Titanium movegen V11 + ACE v11
 
-> **Status: applied** — merged to [titanium-quoridor `main`](https://github.com/titaniummachine1/titanium-quoridor/commit/da75d4a) (`da75d4a`). The `engine/` submodule in this PR points at that commit. Patches kept here for history / `git am` replay.
+> **Status: applied** — merged to [titanium-quoridor `main`](https://github.com/titaniummachine1/titanium-quoridor/commit/da75d4a) (`da75d4a`). Patches kept here for history / `git am` replay.
 
 This directory carries engine work that belongs in the
 [titanium-quoridor](https://github.com/titaniummachine1/titanium-quoridor)
-repository (the `engine/` submodule). This session could only push to the
-website repository, so the changes ship here as a `git format-patch` series.
+repository. This session could only push to the website repository, so the
+changes ship here as a `git format-patch` series.
 
 ## Apply
 
 ```sh
-cd engine                      # the titanium-quoridor checkout
+cd ../engine                   # the canonical titanium-quoridor checkout
 git checkout -b movegen-v11
 git am ../engine-patches/000*.patch
 cargo test --lib               # 118 passed, 0 failed
 ```
 
-Then push the engine branch and bump the website's submodule pointer.
+Then push the engine branch and rebuild the website WASM from `../engine`.
 
 ## Patch 0002 — ACE v11 (pathfix gen11_ghi, from quoridor_5.html)
 

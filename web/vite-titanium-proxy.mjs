@@ -16,10 +16,14 @@ const monorepoRoot = path.resolve(siteRoot, '..');
 const binName = process.platform === 'win32' ? 'titanium.exe' : 'titanium';
 /** Live weights deployed by `training/deploy_trained_ws.py` — override stale embeds in dev. */
 const liveNetWeightsPath = path.join(monorepoRoot, 'engine', 'src', 'titanium', 'net_weights.bin');
-/** Live weights override — only for Titanium v15 live; never ACE v13 frozen tiers. */
+/** Live weights override — Titanium live nets; never ACE v13 frozen tiers. */
 function usesLiveNetOverride(engineMode) {
   const mode = String(engineMode ?? '');
-  return mode === 'titanium-v15' || mode === 'minimax';
+  return (
+    mode === 'titanium-v16' ||
+    mode === 'titanium-v15' ||
+    mode === 'minimax'
+  );
 }
 
 function titaniumChildEnv(engineMode = null) {
@@ -43,16 +47,14 @@ function engineBinaryPaths(root) {
   ];
 }
 
-/** Prefer monorepo `engine/` — `site/engine/` submodule is often stale. */
+/** Canonical workspace engine only. */
 function candidateBinaries() {
   const seen = new Set();
   const out = [];
-  for (const root of [monorepoRoot, siteRoot]) {
-    for (const bin of engineBinaryPaths(root)) {
-      if (!seen.has(bin) && existsSync(bin)) {
-        seen.add(bin);
-        out.push(bin);
-      }
+  for (const bin of engineBinaryPaths(monorepoRoot)) {
+    if (!seen.has(bin) && existsSync(bin)) {
+      seen.add(bin);
+      out.push(bin);
     }
   }
   return out;
@@ -263,6 +265,7 @@ function parseProgressLine(line) {
 function normalizeGenmoveEngine(engine) {
   if (
     engine === 'minimax' ||
+    engine === 'titanium-v16' ||
     engine === 'titanium-v15' ||
     engine === 'titanium-v15-frozen' ||
     engine === 'ace' ||
@@ -294,6 +297,7 @@ function buildGenmoveArgs(moves, options) {
   if (engine === 'minimax') {
     args.push('--nodes', String(maxNodes));
   } else if (
+    engine === 'titanium-v16' ||
     engine === 'titanium-v15' ||
     engine === 'titanium-v15-medium' ||
     engine === 'titanium-v15-frozen' ||
@@ -314,6 +318,19 @@ function buildGenmoveArgs(moves, options) {
     }
     if (threads > 1) {
       args.push('--threads', String(threads));
+    }
+    if (engine === 'titanium-v16') {
+      args.push('--book', 'play');
+      const bookDb = path.join(
+        monorepoRoot,
+        'training',
+        'data',
+        'opening_book',
+        'non_titanium_opening_dag.db',
+      );
+      if (existsSync(bookDb)) {
+        args.push('--book-db', bookDb);
+      }
     }
   } else {
     args.push('--sims', String(maxSims), '--uct', String(uct));
@@ -472,6 +489,7 @@ class TitaniumSeatSession {
     const args =
       this.engine &&
       (this.engine.startsWith('ace') ||
+        this.engine === 'titanium-v16' ||
         this.engine === 'titanium-v15' ||
         this.engine === 'titanium-v15-frozen')
         ? ['session', '--engine', this.engine]
@@ -599,7 +617,7 @@ class TitaniumSeatSession {
 
   go(timeSec, maxNodes, onStderrLine) {
     this.onStderrLine = onStderrLine ?? null;
-    // Native session REPL accepts `go TIME_SEC` only (see site/engine session.rs).
+    // Native session REPL accepts `go TIME_SEC` only (see engine session.rs).
     return this.enqueue(`go ${timeSec}`);
   }
 

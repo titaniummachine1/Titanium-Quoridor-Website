@@ -5,12 +5,14 @@ benchmark material for the Titanium Quoridor project.
 
 Repo: [github.com/titaniummachine1/Titanium-Quoridor-Website](https://github.com/titaniummachine1/Titanium-Quoridor-Website)
 
-The Rust engine lives in [titanium-quoridor](https://github.com/titaniummachine1/titanium-quoridor) and is included here as a git submodule at `engine/`. The website loads the engine as WASM built from tagged engine releases.
+The Rust engine is not copied into this repo. Local builds use the canonical
+workspace sibling at `../engine`; the website loads threaded WASM built from
+that engine.
 
-Clone with submodule:
+Clone the website normally:
 
 ```bash
-git clone --recurse-submodules https://github.com/titaniummachine1/Titanium-Quoridor-Website.git
+git clone https://github.com/titaniummachine1/Titanium-Quoridor-Website.git
 ```
 
 ## Live site (GitHub Pages)
