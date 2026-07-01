@@ -113,7 +113,19 @@ function formatTimeSummary(seconds) {
 }
 
 /** Compact read-only config line for the card, e.g. "Ka · Alpha · Long". */
-export function compactPlayerConfigSummary(ui) {
+function threadRuntimeSummary(snap) {
+  const requested = Number(snap?.requestedThreads);
+  const effective = Number(snap?.effectiveThreads);
+  if (!Number.isFinite(requested) || !Number.isFinite(effective) || effective < 1) {
+    return null;
+  }
+  if (requested > effective) {
+    return `${effective} thread${effective === 1 ? '' : 's'} fallback`;
+  }
+  return `${effective} thread${effective === 1 ? '' : 's'}`;
+}
+
+export function compactPlayerConfigSummary(ui, snap = null) {
   if (!ui || ui.isHuman) return 'Human';
 
   const engine = shortEngineName(ui.playerType);
@@ -145,7 +157,12 @@ export function compactPlayerConfigSummary(ui) {
       ui.playerType === PlayerType.TitaniumV16
         ? catLmrCeilingLabel({ titaniumNet: ui.titaniumNet })
         : titaniumNetLabel({ titaniumNet: ui.titaniumNet });
-    const threads = ui.isTitanium && ui.cores > 1 ? ` · ${ui.cores} threads` : '';
+    const runtimeThreads = threadRuntimeSummary(snap);
+    const threads = runtimeThreads
+      ? ` · ${runtimeThreads}`
+      : ui.isTitanium && ui.cores > 1
+        ? ` · ${ui.cores} threads`
+        : '';
     return `${engine} · ${tierLabel} · ${formatTimeSummary(ui.wallClockSeconds)}${threads}`;
   }
 
@@ -202,8 +219,10 @@ export function playerCardStructureKey(state, seatIndex) {
   const engineStatus = state.engineStatus?.[seatIndex];
   const engineError = state.engineErrors?.[seatIndex];
   const hasError =
-    !isHuman && engineStatus === 'error' && typeof engineError === 'string' && engineError.length > 0;
+    !isHuman && typeof engineError === 'string' && engineError.length > 0;
   const completedSnap = state.lastCompletedThinkBySeat?.[seatIndex];
+  const activeSnap = thinkingTelemetry(state, seatIndex);
+  const snap = activeSnap ?? completedSnap;
   const bestMove = !isThinking ? completedSnap?.move ?? null : null;
 
   return JSON.stringify({
@@ -214,7 +233,7 @@ export function playerCardStructureKey(state, seatIndex) {
     isMyTurn,
     winner: state.winner,
     isDraw: state.isDraw,
-    configSummary: compactPlayerConfigSummary(ui),
+    configSummary: compactPlayerConfigSummary(ui, snap),
     hasError,
     engineError: hasError ? engineError : '',
     bestMove,
@@ -232,7 +251,7 @@ function derivePlayerCardView(state, seatIndex) {
   const engineStatus = state.engineStatus?.[seatIndex];
   const engineError = state.engineErrors?.[seatIndex];
   const hasError =
-    !isHuman && engineStatus === 'error' && typeof engineError === 'string' && engineError.length > 0;
+    !isHuman && typeof engineError === 'string' && engineError.length > 0;
 
   const liveSnap = thinkingTelemetry(state, seatIndex);
   const completedSnap = state.lastCompletedThinkBySeat?.[seatIndex];
@@ -307,7 +326,7 @@ function derivePlayerCardView(state, seatIndex) {
     colorName,
     hasError,
     engineError,
-    configSummary: compactPlayerConfigSummary(ui),
+    configSummary: compactPlayerConfigSummary(ui, snap),
     bestMove,
     livePvMove,
     statusText,

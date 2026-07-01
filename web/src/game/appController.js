@@ -151,6 +151,7 @@ function buildThinkSeatSnapshot({
   requestedThreads,
   effectiveThreads,
   threaded,
+  fallbackReason,
   thinkMs,
 }) {
   const deep = deepestDepthEntry(depthLog);
@@ -184,6 +185,7 @@ function buildThinkSeatSnapshot({
     requestedThreads: requestedThreads ?? null,
     effectiveThreads: effectiveThreads ?? null,
     threaded: threaded ?? null,
+    fallbackReason: fallbackReason ?? null,
     depthLog: depthLog ? [...depthLog] : [],
     thinkMs: thinkMs ?? null,
   };
@@ -1878,6 +1880,34 @@ export class AppController {
           depthLog,
         });
         const siMerged = this.searchInfoBySeat[seatIndex];
+        const requestedThreads = Number(siMerged?.requestedThreads);
+        const effectiveThreads = Number(siMerged?.effectiveThreads);
+        if (
+          isTitaniumEngine(playerType, this.engineConfigs) &&
+          Number.isFinite(requestedThreads) &&
+          Number.isFinite(effectiveThreads) &&
+          requestedThreads > effectiveThreads &&
+          effectiveThreads >= 1
+        ) {
+          const ai = this.settings.playerAiSettings[seatIndex] ?? {};
+          const nextCores = clampCores(effectiveThreads);
+          if (resolveCores(ai) !== nextCores) {
+            this.settings.playerAiSettings[seatIndex] = {
+              ...ai,
+              cores: nextCores,
+              threads: nextCores,
+            };
+            const memory = this.settings.playerAiSettingsMemory?.[seatIndex];
+            if (memory?.[playerType]) {
+              memory[playerType] = {
+                ...memory[playerType],
+                cores: nextCores,
+                threads: nextCores,
+              };
+            }
+            this.persistPlaySettings();
+          }
+        }
         if (info.thinking) {
           if (!this.aiThinking || this.thinkingSeatIndex !== seatIndex) {
             return;
@@ -1927,6 +1957,7 @@ export class AppController {
             requestedThreads: info.requestedThreads ?? this.liveSearch?.requestedThreads,
             effectiveThreads: info.effectiveThreads ?? this.liveSearch?.effectiveThreads,
             threaded: info.threaded ?? this.liveSearch?.threaded,
+            fallbackReason: info.fallbackReason ?? this.liveSearch?.fallbackReason,
             rootScore: liveRootScore,
             elapsedMs: info.elapsedMs ?? this.liveSearch?.elapsedMs,
             rolloutVerdict: info.rolloutVerdict ?? this.liveSearch?.rolloutVerdict,
@@ -2709,6 +2740,7 @@ export class AppController {
         requestedThreads: si.requestedThreads,
         effectiveThreads: si.effectiveThreads,
         threaded: si.threaded,
+        fallbackReason: si.fallbackReason,
         engine: completedEngineLabel,
         thinkMs,
       });
@@ -2733,6 +2765,7 @@ export class AppController {
         requestedThreads: si.requestedThreads ?? null,
         effectiveThreads: si.effectiveThreads ?? null,
         threaded: si.threaded ?? null,
+        fallbackReason: si.fallbackReason ?? null,
         thinkMs,
       });
     }

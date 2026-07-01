@@ -100,6 +100,19 @@ assert(
     ti16Summary.includes('5'),
   ti16Summary,
 );
+const tiFallbackSummary = compactPlayerConfigSummary(
+  {
+    isHuman: false,
+    isTitanium: true,
+    isLocalMcts: true,
+    playerType: PlayerType.TitaniumV16,
+    titaniumNet: 'hard',
+    wallClockSeconds: 5,
+    cores: 8,
+  },
+  { requestedThreads: 8, effectiveThreads: 1 },
+);
+assert(tiFallbackSummary.includes('1 thread fallback'), tiFallbackSummary);
 
 assert(compactPlayerConfigSummary({ isHuman: true }) === 'Human', 'human summary');
 

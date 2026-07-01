@@ -22,6 +22,30 @@ let threadPoolWorkers = 0;
  */
 const engines = new Map();
 
+function canUseThreads() {
+  return (
+    self.crossOriginIsolated &&
+    typeof SharedArrayBuffer !== 'undefined' &&
+    typeof titaniumWasm.initThreadPool === 'function'
+  );
+}
+
+function threadFallbackReason(requestedThreads) {
+  if (requestedThreads <= 1) {
+    return null;
+  }
+  if (typeof titaniumWasm.initThreadPool !== 'function') {
+    return 'wasm build has no thread pool export';
+  }
+  if (!self.crossOriginIsolated) {
+    return 'cross-origin isolation is not active';
+  }
+  if (typeof SharedArrayBuffer === 'undefined') {
+    return 'SharedArrayBuffer is unavailable';
+  }
+  return null;
+}
+
 function tierForEngineMode(engineMode, catLmrCeiling) {
   void engineMode;
   if (catLmrCeiling === 500) {
@@ -111,13 +135,17 @@ async function handleInit(engineMode, catLmrCeiling, threads = 1) {
   await ensureInit();
   ensureEngineInstance(engineMode, catLmrCeiling);
   const threaded = await ensureThreadPool(threads);
+  const effectiveThreads = threaded ? Math.max(1, threads) : 1;
+  const fallbackReason = threadFallbackReason(threads);
   const initMs = performance.now() - t0;
   const rustIdentity = buildMeta;
   console.log('[titanium-wasm-worker] ready', {
     engineMode,
     catLmrCeiling,
     threads,
+    effectiveThreads,
     threaded,
+    fallbackReason,
     initMs,
     buildMeta,
     rustIdentity: rustIdentity,
@@ -129,7 +157,10 @@ async function handleInit(engineMode, catLmrCeiling, threads = 1) {
     engineMode,
     catLmrCeiling,
     threads,
+    requestedThreads: threads,
+    effectiveThreads,
     threaded,
+    fallbackReason,
     buildMeta,
     rustIdentity,
   });
@@ -149,11 +180,9 @@ async function handleSearch(eventData) {
   // Threads only run under cross-origin isolation (SharedArrayBuffer + rayon
   // pool). Without it, force single-thread so the search never reaches for an
   // uninitialized pool.
-  const canThread =
-    self.crossOriginIsolated &&
-    typeof SharedArrayBuffer !== 'undefined' &&
-    typeof titaniumWasm.initThreadPool === 'function';
-  const effectiveThreads = canThread ? Math.max(1, threads) : 1;
+  const canThread = canUseThreads();
+  let effectiveThreads = canThread ? Math.max(1, threads) : 1;
+  let fallbackReason = threadFallbackReason(threads);
   const wasm = await ensureEngine(engineMode, catLmrCeiling, effectiveThreads);
   if (isFreshGame) {
     wasm.reset();
@@ -179,6 +208,10 @@ async function handleSearch(eventData) {
             thinking: true,
             ...data,
             mode: data.engine ?? data.stoppedBy ?? engineMode,
+            requestedThreads: threads,
+            effectiveThreads,
+            threaded: effectiveThreads > 1,
+            fallbackReason,
           });
         }
       : undefined;
@@ -232,6 +265,8 @@ async function handleSearch(eventData) {
     } else if (history.length > 0) {
       wasm.position(history.join(' '));
     }
+    effectiveThreads = 1;
+    fallbackReason = `threaded search retry: ${msg}`;
     searchResult = runSearch(wasm, 1);
   }
   const best = searchResult.best;
@@ -271,6 +306,7 @@ async function handleSearch(eventData) {
     requestedThreads: threads,
     effectiveThreads,
     threaded: effectiveThreads > 1,
+    fallbackReason,
     stopReason,
     searchWallMs,
     stoppedBy: engineMode,
