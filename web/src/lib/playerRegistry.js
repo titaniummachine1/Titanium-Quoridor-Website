@@ -370,10 +370,14 @@ export function describeSearchInfo(playerType, searchInfo, engineConfigs) {
     const suffix = limit ? ` (${limit})` : '';
     const profile =
       searchInfo.profileName && isMinimax ? ` · ${searchInfo.profileName}` : '';
+    const requestedThreads = Number(searchInfo.requestedThreads) || 0;
+    const effectiveThreads = Number(searchInfo.effectiveThreads) || 0;
     const helperPart =
-      config?.kind === 'titanium' && Number(searchInfo.effectiveThreads) > 1
-        ? ` · t${searchInfo.effectiveThreads} h${searchInfo.helperStarts ?? 0}`
-        : '';
+      config?.kind === 'titanium' && effectiveThreads > 1
+        ? ` · t${effectiveThreads} h${searchInfo.helperStarts ?? 0}`
+        : config?.kind === 'titanium' && requestedThreads > 1 && effectiveThreads === 1
+          ? ` · t1/${requestedThreads} fallback`
+          : '';
     return `${formatWallClock(searchInfo.time / 1000)} · ${budgetLabel}${winPart}${distPart}${profile}${helperPart}${suffix}`;
   }
   if (config?.kind === 'remote') {

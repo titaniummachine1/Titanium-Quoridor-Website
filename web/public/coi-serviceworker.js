@@ -95,6 +95,18 @@ if (typeof window === "undefined") {
                         window.sessionStorage.setItem("coiReloadedBySelf", "notcontrolling");
                         coi.doReload();
                     }
+
+                    // Some browsers report the registration before `active` is
+                    // populated on the first visit. Reload when the worker is
+                    // actually ready so SharedArrayBuffer is available before
+                    // the WASM engine starts.
+                    n.serviceWorker.ready.then(() => {
+                        if (!n.serviceWorker.controller && !window.crossOriginIsolated) {
+                            !coi.quiet && console.log("Reloading page after COOP/COEP Service Worker became ready.");
+                            window.sessionStorage.setItem("coiReloadedBySelf", "ready");
+                            coi.doReload();
+                        }
+                    });
                 },
                 (err) => {
                     !coi.quiet && console.error("COOP/COEP Service Worker failed to register:", err);
