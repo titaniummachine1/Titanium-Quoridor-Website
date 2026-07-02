@@ -1184,6 +1184,20 @@ export class AppController {
       return null;
     }
     const posKey = this.lmrPositionKey();
+    if (!this.settings.lmrVisionShallow) {
+      // Live mode: the engine's actual per-root-move depths at the current
+      // search depth (streaming while thinking, else last completed search).
+      const live =
+        (this.aiThinking && this.lmrVizLive) ||
+        this.lmrSearchByPosition.get(posKey) ||
+        this.lmrVizLive ||
+        null;
+      if (live) {
+        this._lmrDisplayViz = live;
+        return live;
+      }
+      // No search data yet for this position — fall through to the plan.
+    }
     const viz = this.lmrShallowByPosition.get(posKey) ?? null;
     if (viz) {
       this._lmrDisplayViz = viz;

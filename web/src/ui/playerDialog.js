@@ -238,6 +238,7 @@ export function openPlayerDialog(state, controller, { mode = 'newgame' } = {}) {
     titaniumNet: [...prefs.titaniumNet],
     cores: [...(prefs.cores ?? [DEFAULT_CORES, DEFAULT_CORES])],
     visionMode: visionModeFromSettings(state.settings),
+    lmrVisionShallow: state.settings?.lmrVisionShallow !== false,
     catVision: {
       ...DEFAULT_CAT_VISION,
       ...(state.settings?.catVision ?? {}),
@@ -386,7 +387,23 @@ function renderVisionSettings(selections) {
 }
 
 function renderLmrPlanHint() {
-  return '<p class="player-dialog__hint">Visualization only. Fixed 10-ply LMR plan: v15 baseline plus depth-1 dead-tail/backward overrides.</p>';
+  return '<p class="player-dialog__hint">Visualization only. v15 graduated base + CAT-graded extra reduction; only sub-10% attention moves drop to depth 1.</p>';
+}
+
+function renderLmrSourceToggle(selections) {
+  const shallow = selections.lmrVisionShallow !== false;
+  const btn = (id, label, active) =>
+    '<button type="button" class="btn ' + (active ? 'btn--primary' : 'btn--ghost') + ' btn--small btn--fit"' +
+    ' data-lmr-source="' + id + '">' + escHtml(label) + '</button>';
+  return (
+    '<div class="player-dialog__field player-dialog__field--compact">' +
+      '<label class="player-dialog__label">LMR source</label>' +
+      '<div class="player-dialog__preset-group">' +
+        btn('plan', 'Plan', shallow) +
+        btn('live', 'Live search', !shallow) +
+      '</div>' +
+    '</div>'
+  );
 }
 
 function renderVisionDetail(selections) {
@@ -414,6 +431,7 @@ function renderVisionDetail(selections) {
   if (selections.visionMode === 'lmr') {
     return (
       '<div class="player-dialog__vision-detail">' +
+        renderLmrSourceToggle(selections) +
         renderLmrPlanHint() +
       '</div>'
     );
@@ -622,6 +640,18 @@ function wireVisionSettings(overlay, selections, controller) {
 }
 
 function wireVisionDetail(overlay, selections, controller) {
+  overlay.querySelectorAll('[data-lmr-source]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      selections.lmrVisionShallow = btn.dataset.lmrSource !== 'live';
+      controller.toggleLmrShallow?.(selections.lmrVisionShallow);
+      overlay.querySelectorAll('[data-lmr-source]').forEach((b) => {
+        const active = (b.dataset.lmrSource === 'live') === !selections.lmrVisionShallow;
+        b.classList.toggle('btn--primary', active);
+        b.classList.toggle('btn--ghost', !active);
+      });
+    });
+  });
+
   overlay.querySelectorAll('[data-cat-setting]').forEach((input) => {
     const update = (event) => {
       const target = event.currentTarget;
